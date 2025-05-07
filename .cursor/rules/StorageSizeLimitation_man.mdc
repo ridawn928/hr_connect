@@ -1,0 +1,1135 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces the technical constraint that local database should not exceed 100MB for the HR Connect application
+globs: "**/database*.dart,**/storage*.dart,**/repository/*.dart,**/image_*.dart,**/document*.dart"
+alwaysApply: false
+@storageSizeLimit
+---
+
+# Storage Size Limitation
+
+This rule provides guidance for enforcing the technical constraint that the local database should not exceed 100MB for the HR Connect application. It focuses on database growth monitoring, proper image compression, document storage efficiency, and data cleanup routines.
+
+## Core Principles
+
+1. Local database must not exceed 100MB for typical usage
+2. Image assets must be properly compressed and cached
+3. Document storage must be optimized for offline access
+4. Database growth must be monitored
+5. Data cleanup routines must be implemented
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Database
+  drift: ^2.26.1                # For local database storage
+  
+  # Storage monitoring
+  path_provider: ^2.1.1         # For accessing storage paths
+  disk_space: ^0.2.1            # For monitoring storage usage
+  
+  # Image handling
+  flutter_image_compress: ^2.0.4 # For image compression
+  cached_network_image: ^3.2.3   # For efficient image caching
+  
+  # State management
+  riverpod: ^2.6.1               # For state management
+  flutter_riverpod: ^2.6.1       # Flutter integration for Riverpod
+  
+  # Utilities
+  collection: ^1.17.2            # For collection operations
+  async: ^2.11.0                 # For async operations
+```
+
+## Storage Monitoring Implementation
+
+### Storage Monitor Service
+
+```dart
+/// Service for monitoring storage usage
+class StorageMonitorService {
+  final DatabaseProvider _databaseProvider;
+  final SharedPreferences _prefs;
+  
+  static const String _lastCheckTimeKey = 'storage_last_check_time';
+  static const String _dbSizeKey = 'storage_db_size';
+  static const Duration _checkInterval = Duration(hours: 12);
+  
+  // Storage limits in bytes
+  static const int _maxDbSizeBytes = 100 * 1024 * 1024; // 100 MB
+  static const int _warningThresholdBytes = 80 * 1024 * 1024; // 80 MB
+  static const double _cleanupTargetRatio = 0.7; // Aim to reduce to 70% after cleanup
+  
+  StorageMonitorService(this._databaseProvider, this._prefs);
+  
+  /// Checks if it's time to perform a storage check
+  bool shouldCheckStorage() {
+    final lastCheckTimeStr = _prefs.getString(_lastCheckTimeKey);
+    
+    if (lastCheckTimeStr == null) {
+      return true; // First run, should check
+    }
+    
+    final lastCheckTime = DateTime.parse(lastCheckTimeStr);
+    final now = DateTime.now();
+    
+    return now.difference(lastCheckTime) >= _checkInterval;
+  }
+  
+  /// Updates the last check time
+  Future<void> updateLastCheckTime() async {
+    await _prefs.setString(_lastCheckTimeKey, DateTime.now().toIso8601String());
+  }
+  
+  /// Gets the current database size
+  Future<int> getDatabaseSize() async {
+    final dbFile = await _databaseProvider.getDatabaseFile();
+    
+    if (!await dbFile.exists()) {
+      return 0;
+    }
+    
+    final size = await dbFile.length();
+    await _prefs.setInt(_dbSizeKey, size);
+    
+    return size;
+  }
+  
+  /// Checks if database size exceeds the limit
+  Future<bool> isDatabaseSizeExceeded() async {
+    final size = await getDatabaseSize();
+    return size > _maxDbSizeBytes;
+  }
+  
+  /// Checks if database size is approaching the warning threshold
+  Future<bool> isDatabaseSizeWarning() async {
+    final size = await getDatabaseSize();
+    return size > _warningThresholdBytes;
+  }
+  
+  /// Gets the database size as a percentage of the maximum allowed
+  Future<double> getDatabaseSizePercentage() async {
+    final size = await getDatabaseSize();
+    return size / _maxDbSizeBytes;
+  }
+  
+  /// Formats the database size as a human-readable string
+  Future<String> getFormattedDatabaseSize() async {
+    final size = await getDatabaseSize();
+    
+    if (size < 1024) {
+      return '$size B';
+    } else if (size < 1024 * 1024) {
+      final kb = size / 1024;
+      return '${kb.toStringAsFixed(1)} KB';
+    } else {
+      final mb = size / (1024 * 1024);
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+  }
+  
+  /// Runs a database cleanup if needed
+  Future<void> runCleanupIfNeeded() async {
+    if (!shouldCheckStorage()) {
+      return;
+    }
+    
+    await updateLastCheckTime();
+    
+    final isExceeded = await isDatabaseSizeExceeded();
+    final isWarning = await isDatabaseSizeWarning();
+    
+    if (isExceeded) {
+      // Database size exceeded, perform aggressive cleanup
+      await _runAggressiveCleanup();
+    } else if (isWarning) {
+      // Database size approaching limit, perform standard cleanup
+      await _runStandardCleanup();
+    }
+  }
+  
+  /// Runs an aggressive cleanup to reduce database size quickly
+  Future<void> _runAggressiveCleanup() async {
+    // Calculate target size
+    final targetSize = (_maxDbSizeBytes * _cleanupTargetRatio).toInt();
+    
+    // Get data cleanup service
+    final cleanupService = GetIt.instance<DataCleanupService>();
+    
+    // Run aggressive cleanups until target size is reached or no more data can be cleaned
+    bool cleanupPerformed;
+    do {
+      cleanupPerformed = await cleanupService.performAggressiveCleanup();
+      final newSize = await getDatabaseSize();
+      
+      if (newSize <= targetSize) {
+        break;
+      }
+    } while (cleanupPerformed);
+    
+    // Log completion
+    final newSize = await getFormattedDatabaseSize();
+    log('Aggressive cleanup completed. New database size: $newSize');
+  }
+  
+  /// Runs a standard cleanup to prevent database size from reaching the limit
+  Future<void> _runStandardCleanup() async {
+    // Get data cleanup service
+    final cleanupService = GetIt.instance<DataCleanupService>();
+    
+    // Perform standard cleanup
+    await cleanupService.performStandardCleanup();
+    
+    // Log completion
+    final newSize = await getFormattedDatabaseSize();
+    log('Standard cleanup completed. New database size: $newSize');
+  }
+}
+```
+
+### Database Provider
+
+```dart
+/// Provider for database access and monitoring
+class DatabaseProvider {
+  final String _databaseName;
+  final Database _database;
+  
+  DatabaseProvider(this._databaseName, this._database);
+  
+  /// Gets the database file
+  Future<File> getDatabaseFile() async {
+    final dbFolder = await getApplicationDocumentsDirectory();
+    return File('${dbFolder.path}/$_databaseName');
+  }
+  
+  /// Runs VACUUM on SQLite database to reclaim space
+  Future<void> vacuumDatabase() async {
+    await _database.customStatement('VACUUM');
+  }
+  
+  /// Gets table row counts
+  Future<Map<String, int>> getTableRowCounts() async {
+    final result = <String, int>{};
+    
+    // Get list of tables
+    final tables = await _database.customSelect(
+      "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'drift_%'",
+    ).get();
+    
+    // Count rows in each table
+    for (final table in tables) {
+      final tableName = table.data['name'] as String;
+      final countResult = await _database.customSelect(
+        'SELECT COUNT(*) as count FROM $tableName',
+      ).getSingle();
+      
+      result[tableName] = countResult.data['count'] as int;
+    }
+    
+    return result;
+  }
+  
+  /// Gets the size of each table
+  Future<Map<String, int>> getTableSizes() async {
+    final result = <String, int>{};
+    
+    try {
+      // Get page count for each table
+      final pageCounts = await _database.customSelect(
+        "SELECT name, SUM(pgsize) as size FROM dbstat WHERE name NOT LIKE 'sqlite_%' AND name NOT LIKE 'drift_%' GROUP BY name",
+      ).get();
+      
+      for (final row in pageCounts) {
+        final tableName = row.data['name'] as String;
+        final size = row.data['size'] as int;
+        result[tableName] = size;
+      }
+    } catch (e) {
+      // dbstat may not be available on all SQLite versions
+      // Fall back to row counts as an approximate indicator
+      final rowCounts = await getTableRowCounts();
+      for (final entry in rowCounts.entries) {
+        // Rough estimate: 100 bytes per row (this is very approximate)
+        result[entry.key] = entry.value * 100;
+      }
+    }
+    
+    return result;
+  }
+}
+```
+
+## Data Cleanup Implementation
+
+### Data Cleanup Service
+
+```dart
+/// Service for cleaning up database data
+class DataCleanupService {
+  final AttendanceRepository _attendanceRepository;
+  final DocumentRepository _documentRepository;
+  final NotificationRepository _notificationRepository;
+  final SyncRepository _syncRepository;
+  final ImageCache _imageCache;
+  final DatabaseProvider _databaseProvider;
+  
+  // Cleanup thresholds
+  static const Duration _oldAttendanceThreshold = Duration(days: 90); // 3 months
+  static const Duration _oldNotificationThreshold = Duration(days: 30); // 1 month
+  static const Duration _oldSyncThreshold = Duration(days: 14); // 2 weeks
+  static const Duration _aggressiveAttendanceThreshold = Duration(days: 60); // 2 months
+  static const Duration _aggressiveNotificationThreshold = Duration(days: 14); // 2 weeks
+  static const int _maxCachedImages = 100;
+  static const int _aggressiveMaxCachedImages = 50;
+  
+  DataCleanupService(
+    this._attendanceRepository,
+    this._documentRepository,
+    this._notificationRepository,
+    this._syncRepository,
+    this._imageCache,
+    this._databaseProvider,
+  );
+  
+  /// Performs a standard cleanup to prevent database growth
+  Future<void> performStandardCleanup() async {
+    // Clean up old attendance records
+    final oldAttendanceDate = DateTime.now().subtract(_oldAttendanceThreshold);
+    await _attendanceRepository.deleteAttendanceOlderThan(oldAttendanceDate);
+    
+    // Clean up old notifications
+    final oldNotificationDate = DateTime.now().subtract(_oldNotificationThreshold);
+    await _notificationRepository.deleteNotificationsOlderThan(oldNotificationDate);
+    
+    // Clean up completed sync operations
+    final oldSyncDate = DateTime.now().subtract(_oldSyncThreshold);
+    await _syncRepository.deleteCompletedSyncOlderThan(oldSyncDate);
+    
+    // Clean up image cache
+    await _cleanupImageCache(_maxCachedImages);
+    
+    // Cleanup low-priority documents
+    await _documentRepository.cleanupLowPriorityDocuments();
+    
+    // Run VACUUM to reclaim space
+    await _databaseProvider.vacuumDatabase();
+    
+    // Log cleanup
+    await _logCleanupResults('Standard cleanup');
+  }
+  
+  /// Performs an aggressive cleanup when database size exceeds limits
+  Future<bool> performAggressiveCleanup() async {
+    // Track if any cleanup was performed
+    bool cleanupPerformed = false;
+    
+    // More aggressive attendance cleanup
+    final aggressiveAttendanceDate = DateTime.now().subtract(_aggressiveAttendanceThreshold);
+    final attendanceDeleted = await _attendanceRepository.deleteAttendanceOlderThan(aggressiveAttendanceDate);
+    cleanupPerformed = cleanupPerformed || attendanceDeleted > 0;
+    
+    // More aggressive notification cleanup
+    final aggressiveNotificationDate = DateTime.now().subtract(_aggressiveNotificationThreshold);
+    final notificationsDeleted = await _notificationRepository.deleteNotificationsOlderThan(aggressiveNotificationDate);
+    cleanupPerformed = cleanupPerformed || notificationsDeleted > 0;
+    
+    // Clean up all completed sync operations
+    final syncDeleted = await _syncRepository.deleteAllCompletedSync();
+    cleanupPerformed = cleanupPerformed || syncDeleted > 0;
+    
+    // More aggressive image cache cleanup
+    await _cleanupImageCache(_aggressiveMaxCachedImages);
+    cleanupPerformed = true; // Assume some cleanup happened
+    
+    // Clean up all non-essential documents
+    final documentsDeleted = await _documentRepository.cleanupAllNonEssentialDocuments();
+    cleanupPerformed = cleanupPerformed || documentsDeleted > 0;
+    
+    // Run VACUUM to reclaim space
+    await _databaseProvider.vacuumDatabase();
+    
+    // Log cleanup
+    await _logCleanupResults('Aggressive cleanup');
+    
+    return cleanupPerformed;
+  }
+  
+  /// Cleans up the image cache to the specified limit
+  Future<void> _cleanupImageCache(int maxImages) async {
+    // Clear Flutter's image cache
+    _imageCache.clear();
+    
+    // Clean up cached network images
+    final cacheManager = DefaultCacheManager();
+    await cacheManager.emptyCache();
+    
+    // Additional custom image cache cleanup
+    // Implement based on your image caching strategy
+  }
+  
+  /// Logs the results of cleanup operations
+  Future<void> _logCleanupResults(String cleanupType) async {
+    final tableSizes = await _databaseProvider.getTableSizes();
+    final totalSize = tableSizes.values.fold<int>(0, (sum, size) => sum + size);
+    
+    final formattedSize = totalSize < 1024 * 1024
+        ? '${(totalSize / 1024).toStringAsFixed(1)} KB'
+        : '${(totalSize / (1024 * 1024)).toStringAsFixed(1)} MB';
+    
+    log('$cleanupType completed. Current database size: $formattedSize');
+    
+    // Log sizes of largest tables
+    final sortedTables = tableSizes.entries.toList()
+      ..sort((a, b) => b.value.compareTo(a.value));
+    
+    final topTables = sortedTables.take(5).map((e) {
+      final size = e.value < 1024 * 1024
+          ? '${(e.value / 1024).toStringAsFixed(1)} KB'
+          : '${(e.value / (1024 * 1024)).toStringAsFixed(1)} MB';
+      return '${e.key}: $size';
+    }).join(', ');
+    
+    log('Largest tables: $topTables');
+  }
+}
+```
+
+## Image Optimization
+
+### Image Optimization Service
+
+```dart
+/// Service for optimizing images before storage
+class ImageOptimizationService {
+  final ImageRepository _imageRepository;
+  
+  // Image quality settings
+  static const int _profileImageQuality = 80; // 0-100
+  static const int _documentImageQuality = 70; // 0-100
+  static const int _maxProfileImageWidth = 500; // pixels
+  static const int _maxDocumentImageWidth = 1200; // pixels
+  
+  ImageOptimizationService(this._imageRepository);
+  
+  /// Optimizes and stores a profile image
+  Future<String> optimizeAndStoreProfileImage(File imageFile) async {
+    final optimizedBytes = await _optimizeImage(
+      imageFile,
+      _maxProfileImageWidth,
+      _profileImageQuality,
+    );
+    
+    return _imageRepository.storeProfileImage(optimizedBytes);
+  }
+  
+  /// Optimizes and stores a document image
+  Future<String> optimizeAndStoreDocumentImage(File imageFile) async {
+    final optimizedBytes = await _optimizeImage(
+      imageFile,
+      _maxDocumentImageWidth,
+      _documentImageQuality,
+    );
+    
+    return _imageRepository.storeDocumentImage(optimizedBytes);
+  }
+  
+  /// Optimizes an image by resizing and compressing it
+  Future<Uint8List> _optimizeImage(
+    File imageFile,
+    int maxWidth,
+    int quality,
+  ) async {
+    // Get original image dimensions
+    final originalBytes = await imageFile.readAsBytes();
+    final originalImage = await decodeImageFromList(originalBytes);
+    final originalWidth = originalImage.width;
+    final originalHeight = originalImage.height;
+    
+    // Calculate new dimensions while maintaining aspect ratio
+    int targetWidth = originalWidth;
+    int targetHeight = originalHeight;
+    
+    if (originalWidth > maxWidth) {
+      targetWidth = maxWidth;
+      targetHeight = (originalHeight * maxWidth / originalWidth).round();
+    }
+    
+    // Determine image format based on extension
+    final extension = imageFile.path.split('.').last.toLowerCase();
+    CompressFormat format;
+    
+    switch (extension) {
+      case 'jpg':
+      case 'jpeg':
+        format = CompressFormat.jpeg;
+        break;
+      case 'png':
+        format = CompressFormat.png;
+        break;
+      case 'heic':
+      case 'heif':
+        // Convert HEIC/HEIF to JPEG for better compatibility
+        format = CompressFormat.jpeg;
+        break;
+      default:
+        // Default to JPEG for unknown formats
+        format = CompressFormat.jpeg;
+    }
+    
+    // Compress the image
+    final compressedBytes = await FlutterImageCompress.compressWithFile(
+      imageFile.absolute.path,
+      minWidth: targetWidth,
+      minHeight: targetHeight,
+      quality: quality,
+      format: format,
+    );
+    
+    if (compressedBytes == null) {
+      // Fallback if compression fails
+      return originalBytes;
+    }
+    
+    // Log compression results
+    final originalSize = originalBytes.length;
+    final compressedSize = compressedBytes.length;
+    final savingsPercent = ((originalSize - compressedSize) / originalSize * 100).round();
+    
+    log('Image optimized from ${_formatSize(originalSize)} to ${_formatSize(compressedSize)} '
+        '(saved $savingsPercent%)');
+    
+    return compressedBytes;
+  }
+  
+  /// Formats file size as a human-readable string
+  String _formatSize(int bytes) {
+    if (bytes < 1024) {
+      return '$bytes B';
+    } else if (bytes < 1024 * 1024) {
+      final kb = bytes / 1024;
+      return '${kb.toStringAsFixed(1)} KB';
+    } else {
+      final mb = bytes / (1024 * 1024);
+      return '${mb.toStringAsFixed(1)} MB';
+    }
+  }
+}
+```
+
+## Document Storage Optimization
+
+```dart
+/// Repository for managing document storage
+class DocumentRepository {
+  final Database _database;
+  final StorageProvider _storageProvider;
+  
+  DocumentRepository(this._database, this._storageProvider);
+  
+  /// Stores a document with optimization
+  Future<String> storeDocument(
+    File documentFile,
+    DocumentType type,
+    DocumentPriority priority,
+  ) async {
+    // Generate a unique ID for the document
+    final documentId = const Uuid().v4();
+    
+    // Get document metadata
+    final fileName = documentFile.path.split('/').last;
+    final extension = fileName.split('.').last.toLowerCase();
+    final mimeType = _getMimeType(extension);
+    final fileSize = await documentFile.length();
+    
+    // Store document in the appropriate location
+    final storagePath = await _storageProvider.storeDocument(
+      documentFile,
+      documentId,
+      extension,
+    );
+    
+    // Insert document metadata into database
+    await _database.into(_database.documents).insert(
+      DocumentsCompanion.insert(
+        id: documentId,
+        fileName: fileName,
+        extension: extension,
+        mimeType: mimeType,
+        fileSize: fileSize,
+        storagePath: storagePath,
+        type: type.toString(),
+        priority: priority.toString(),
+        uploadedAt: DateTime.now(),
+      ),
+    );
+    
+    return documentId;
+  }
+  
+  /// Deletes low-priority documents to save space
+  Future<int> cleanupLowPriorityDocuments() async {
+    // Get documents with LOW priority that haven't been accessed recently
+    final cutoffDate = DateTime.now().subtract(Duration(days: 30));
+    
+    final lowPriorityDocs = await (_database.select(_database.documents)
+      ..where((d) => d.priority.equals(DocumentPriority.low.toString()))
+      ..where((d) => d.lastAccessedAt.isSmallerThanValue(cutoffDate))
+      ..limit(100))
+      .get();
+    
+    // Delete each document
+    int deletedCount = 0;
+    for (final doc in lowPriorityDocs) {
+      try {
+        // Delete the file
+        await _storageProvider.deleteDocument(doc.storagePath);
+        
+        // Delete the database entry
+        await (_database.delete(_database.documents)
+          ..where((d) => d.id.equals(doc.id)))
+          .go();
+        
+        deletedCount++;
+      } catch (e) {
+        log('Failed to delete document ${doc.id}: $e');
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /// Deletes all non-essential documents (aggressive cleanup)
+  Future<int> cleanupAllNonEssentialDocuments() async {
+    // Get all documents except HIGH priority ones
+    final nonEssentialDocs = await (_database.select(_database.documents)
+      ..where((d) => d.priority.isNotValue(DocumentPriority.high.toString())))
+      .get();
+    
+    // Delete each document
+    int deletedCount = 0;
+    for (final doc in nonEssentialDocs) {
+      try {
+        // Delete the file
+        await _storageProvider.deleteDocument(doc.storagePath);
+        
+        // Delete the database entry
+        await (_database.delete(_database.documents)
+          ..where((d) => d.id.equals(doc.id)))
+          .go();
+        
+        deletedCount++;
+      } catch (e) {
+        log('Failed to delete document ${doc.id}: $e');
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /// Determines the MIME type from file extension
+  String _getMimeType(String extension) {
+    switch (extension.toLowerCase()) {
+      case 'pdf':
+        return 'application/pdf';
+      case 'doc':
+        return 'application/msword';
+      case 'docx':
+        return 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+      case 'xls':
+        return 'application/vnd.ms-excel';
+      case 'xlsx':
+        return 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      default:
+        return 'application/octet-stream';
+    }
+  }
+}
+
+/// Types of documents in the system
+enum DocumentType {
+  employeeProfile,
+  attendance,
+  leave,
+  payroll,
+  performance,
+  contract,
+  other,
+}
+
+/// Priority levels for documents (affects cleanup)
+enum DocumentPriority {
+  low,     // Can be deleted when space is needed
+  medium,  // Important but not critical
+  high,    // Critical documents that should never be deleted
+}
+```
+
+## Storage Monitoring UI
+
+```dart
+/// UI widget to display storage usage
+class StorageMonitorWidget extends ConsumerWidget {
+  const StorageMonitorWidget({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final storageInfoAsync = ref.watch(storageInfoProvider);
+    
+    return storageInfoAsync.when(
+      loading: () => Center(child: CircularProgressIndicator()),
+      error: (error, stack) => Center(
+        child: Text('Error loading storage info: ${error.toString()}'),
+      ),
+      data: (info) {
+        final percentage = info.percentage;
+        final color = _getColorForPercentage(percentage);
+        
+        return Container(
+          padding: EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Theme.of(context).colorScheme.surface,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black12,
+                blurRadius: 5,
+                offset: Offset(0, 2),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Database Storage',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              SizedBox(height: 8),
+              LinearProgressIndicator(
+                value: percentage,
+                backgroundColor: Colors.grey.shade200,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+              SizedBox(height: 8),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('${(percentage * 100).toStringAsFixed(1)}%'),
+                  Text(info.formattedSize),
+                ],
+              ),
+              if (percentage > 0.8) ...[
+                SizedBox(height: 16),
+                Text(
+                  'Storage space is running low. Consider clearing unnecessary data.',
+                  style: TextStyle(color: Colors.red),
+                ),
+                SizedBox(height: 8),
+                ElevatedButton.icon(
+                  onPressed: () => _showCleanupDialog(context, ref),
+                  icon: Icon(Icons.cleaning_services),
+                  label: Text('Clean up storage'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.shade100,
+                    foregroundColor: Colors.red.shade800,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        );
+      },
+    );
+  }
+  
+  /// Shows a dialog to confirm storage cleanup
+  void _showCleanupDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Clean Up Storage'),
+        content: Text(
+          'This will remove old attendance records, notifications, and other non-essential data to free up space. '
+          'Critical data will not be affected.\n\n'
+          'Do you want to proceed?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              _performCleanup(context, ref);
+            },
+            child: Text('Clean Up'),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  /// Performs the storage cleanup
+  Future<void> _performCleanup(BuildContext context, WidgetRef ref) async {
+    // Show loading indicator
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Cleaning up storage...'),
+          ],
+        ),
+      ),
+    );
+    
+    try {
+      // Get cleanup service
+      final cleanupService = ref.read(dataCleanupServiceProvider);
+      
+      // Perform cleanup
+      await cleanupService.performStandardCleanup();
+      
+      // Close loading dialog
+      Navigator.of(context).pop();
+      
+      // Show success message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Storage cleanup completed successfully'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      
+      // Refresh storage info
+      ref.refresh(storageInfoProvider);
+    } catch (e) {
+      // Close loading dialog
+      Navigator.of(context).pop();
+      
+      // Show error message
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Storage cleanup failed: ${e.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+  
+  /// Gets a color based on the storage percentage
+  Color _getColorForPercentage(double percentage) {
+    if (percentage < 0.5) {
+      return Colors.green;
+    } else if (percentage < 0.8) {
+      return Colors.orange;
+    } else {
+      return Colors.red;
+    }
+  }
+}
+
+/// Provider for storage information
+final storageInfoProvider = FutureProvider<StorageInfo>((ref) async {
+  final storageMonitor = ref.watch(storageMonitorServiceProvider);
+  
+  final size = await storageMonitor.getDatabaseSize();
+  final percentage = size / (100 * 1024 * 1024); // As percentage of 100 MB
+  final formattedSize = await storageMonitor.getFormattedDatabaseSize();
+  
+  return StorageInfo(
+    sizeBytes: size,
+    percentage: percentage,
+    formattedSize: formattedSize,
+  );
+});
+
+/// Provider for the storage monitor service
+final storageMonitorServiceProvider = Provider<StorageMonitorService>((ref) {
+  final databaseProvider = ref.watch(databaseProviderProvider);
+  final prefs = ref.watch(sharedPreferencesProvider);
+  
+  return StorageMonitorService(databaseProvider, prefs);
+});
+
+/// Information about storage usage
+class StorageInfo {
+  final int sizeBytes;
+  final double percentage;
+  final String formattedSize;
+  
+  const StorageInfo({
+    required this.sizeBytes,
+    required this.percentage,
+    required this.formattedSize,
+  });
+}
+```
+
+## Business Rules for Storage Size Limitation
+
+1. **Maximum Database Size**
+   - Local database must not exceed 100MB for typical usage
+   - Warning thresholds must be set at 80% capacity
+   - Cleanup operations must target reducing to 70% capacity
+
+2. **Storage Monitoring**
+   - Database size must be periodically checked (every 12 hours)
+   - Storage usage must be presented to users when approaching limits
+   - Table-level statistics must be tracked to identify growth trends
+
+3. **Cleanup Policies**
+   - Standard cleanup must remove:
+     - Attendance records older than 90 days
+     - Notifications older than 30 days
+     - Completed sync operations older than 14 days
+     - Cached images beyond a reasonable limit
+     - Low-priority documents not accessed recently
+   - Aggressive cleanup must remove:
+     - Attendance records older than 60 days
+     - Notifications older than 14 days
+     - All completed sync operations
+     - Most cached images
+     - All non-essential documents
+
+4. **Image Optimization**
+   - Profile images must be resized to maximum 500px width
+   - Document images must be resized to maximum 1200px width
+   - JPEG compression quality must be set to 70-80%
+   - Image caching must be limited and respect cleanup policies
+
+5. **Document Management**
+   - Documents must have priority levels (low, medium, high)
+   - Low-priority documents can be deleted during cleanup
+   - High-priority documents must never be automatically deleted
+   - Document access history must be tracked for cleanup decisions
+
+## Testing Approach
+
+```dart
+void main() {
+  group('Storage Monitor Service', () {
+    late MockDatabaseProvider mockDatabaseProvider;
+    late MockSharedPreferences mockPrefs;
+    late StorageMonitorService storageMonitor;
+    
+    setUp(() {
+      mockDatabaseProvider = MockDatabaseProvider();
+      mockPrefs = MockSharedPreferences();
+      storageMonitor = StorageMonitorService(mockDatabaseProvider, mockPrefs);
+    });
+    
+    test('should correctly detect database size exceeding limit', () async {
+      // Arrange
+      final mockDbFile = MockFile();
+      when(mockDatabaseProvider.getDatabaseFile())
+          .thenAnswer((_) async => mockDbFile);
+      when(mockDbFile.exists()).thenAnswer((_) async => true);
+      when(mockDbFile.length()).thenAnswer((_) async => 110 * 1024 * 1024); // 110 MB
+      
+      // Act
+      final isExceeded = await storageMonitor.isDatabaseSizeExceeded();
+      
+      // Assert
+      expect(isExceeded, isTrue);
+    });
+    
+    test('should detect warning threshold when approaching limit', () async {
+      // Arrange
+      final mockDbFile = MockFile();
+      when(mockDatabaseProvider.getDatabaseFile())
+          .thenAnswer((_) async => mockDbFile);
+      when(mockDbFile.exists()).thenAnswer((_) async => true);
+      when(mockDbFile.length()).thenAnswer((_) async => 85 * 1024 * 1024); // 85 MB
+      
+      // Act
+      final isWarning = await storageMonitor.isDatabaseSizeWarning();
+      
+      // Assert
+      expect(isWarning, isTrue);
+    });
+    
+    test('should correctly calculate database size percentage', () async {
+      // Arrange
+      final mockDbFile = MockFile();
+      when(mockDatabaseProvider.getDatabaseFile())
+          .thenAnswer((_) async => mockDbFile);
+      when(mockDbFile.exists()).thenAnswer((_) async => true);
+      when(mockDbFile.length()).thenAnswer((_) async => 50 * 1024 * 1024); // 50 MB
+      
+      // Act
+      final percentage = await storageMonitor.getDatabaseSizePercentage();
+      
+      // Assert
+      expect(percentage, 0.5); // 50 / 100 = 0.5 or 50%
+    });
+    
+    test('should correctly format database size', () async {
+      // Arrange
+      final mockDbFile = MockFile();
+      when(mockDatabaseProvider.getDatabaseFile())
+          .thenAnswer((_) async => mockDbFile);
+      when(mockDbFile.exists()).thenAnswer((_) async => true);
+      when(mockDbFile.length()).thenAnswer((_) async => 25 * 1024 * 1024); // 25 MB
+      
+      // Act
+      final formattedSize = await storageMonitor.getFormattedDatabaseSize();
+      
+      // Assert
+      expect(formattedSize, '25.0 MB');
+    });
+    
+    test('should detect when storage check is needed', () {
+      // Arrange - No previous check
+      when(mockPrefs.getString('storage_last_check_time'))
+          .thenReturn(null);
+      
+      // Act
+      final shouldCheck = storageMonitor.shouldCheckStorage();
+      
+      // Assert
+      expect(shouldCheck, isTrue);
+    });
+    
+    test('should track last check time correctly', () async {
+      // Arrange
+      when(mockPrefs.setString(any, any))
+          .thenAnswer((_) async => true);
+      
+      // Act
+      await storageMonitor.updateLastCheckTime();
+      
+      // Assert
+      verify(mockPrefs.setString('storage_last_check_time', any)).called(1);
+    });
+  });
+  
+  group('Data Cleanup Service', () {
+    late MockAttendanceRepository mockAttendanceRepository;
+    late MockDocumentRepository mockDocumentRepository;
+    late MockNotificationRepository mockNotificationRepository;
+    late MockSyncRepository mockSyncRepository;
+    late MockImageCache mockImageCache;
+    late MockDatabaseProvider mockDatabaseProvider;
+    late DataCleanupService cleanupService;
+    
+    setUp(() {
+      mockAttendanceRepository = MockAttendanceRepository();
+      mockDocumentRepository = MockDocumentRepository();
+      mockNotificationRepository = MockNotificationRepository();
+      mockSyncRepository = MockSyncRepository();
+      mockImageCache = MockImageCache();
+      mockDatabaseProvider = MockDatabaseProvider();
+      
+      cleanupService = DataCleanupService(
+        mockAttendanceRepository,
+        mockDocumentRepository,
+        mockNotificationRepository,
+        mockSyncRepository,
+        mockImageCache,
+        mockDatabaseProvider,
+      );
+    });
+    
+    test('should perform standard cleanup correctly', () async {
+      // Arrange
+      when(mockAttendanceRepository.deleteAttendanceOlderThan(any))
+          .thenAnswer((_) async => 10);
+      when(mockNotificationRepository.deleteNotificationsOlderThan(any))
+          .thenAnswer((_) async => 5);
+      when(mockSyncRepository.deleteCompletedSyncOlderThan(any))
+          .thenAnswer((_) async => 15);
+      when(mockDocumentRepository.cleanupLowPriorityDocuments())
+          .thenAnswer((_) async => 3);
+      when(mockDatabaseProvider.vacuumDatabase())
+          .thenAnswer((_) async => {});
+      
+      // Act
+      await cleanupService.performStandardCleanup();
+      
+      // Assert
+      verify(mockAttendanceRepository.deleteAttendanceOlderThan(any)).called(1);
+      verify(mockNotificationRepository.deleteNotificationsOlderThan(any)).called(1);
+      verify(mockSyncRepository.deleteCompletedSyncOlderThan(any)).called(1);
+      verify(mockDocumentRepository.cleanupLowPriorityDocuments()).called(1);
+      verify(mockDatabaseProvider.vacuumDatabase()).called(1);
+      verify(mockImageCache.clear()).called(1);
+    });
+    
+    test('should perform aggressive cleanup correctly', () async {
+      // Arrange
+      when(mockAttendanceRepository.deleteAttendanceOlderThan(any))
+          .thenAnswer((_) async => 25);
+      when(mockNotificationRepository.deleteNotificationsOlderThan(any))
+          .thenAnswer((_) async => 15);
+      when(mockSyncRepository.deleteAllCompletedSync())
+          .thenAnswer((_) async => 30);
+      when(mockDocumentRepository.cleanupAllNonEssentialDocuments())
+          .thenAnswer((_) async => 10);
+      when(mockDatabaseProvider.vacuumDatabase())
+          .thenAnswer((_) async => {});
+      
+      // Act
+      final result = await cleanupService.performAggressiveCleanup();
+      
+      // Assert
+      expect(result, isTrue); // Cleanup performed
+      verify(mockAttendanceRepository.deleteAttendanceOlderThan(any)).called(1);
+      verify(mockNotificationRepository.deleteNotificationsOlderThan(any)).called(1);
+      verify(mockSyncRepository.deleteAllCompletedSync()).called(1);
+      verify(mockDocumentRepository.cleanupAllNonEssentialDocuments()).called(1);
+      verify(mockDatabaseProvider.vacuumDatabase()).called(1);
+      verify(mockImageCache.clear()).called(1);
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Efficient Database Design**
+   - Use efficient table designs to minimize row size
+   - Avoid storing large BLOBs directly in the database
+   - Implement proper indexing to optimize query performance
+   - Use migrations to fix inefficient schema designs
+
+2. **Storage Monitoring**
+   - Check database size periodically but not too frequently
+   - Use VACUUM command to reclaim space after deletes
+   - Implement proper error handling for file operations
+   - Log database size changes for trend analysis
+
+3. **Image Optimization**
+   - Compress all images before storage
+   - Consider using WebP format for better compression
+   - Implement progressive loading for large images
+   - Cache optimized versions for different screen sizes
+
+4. **Document Management**
+   - Prioritize documents by business importance
+   - Store documents in the file system, not in the database
+   - Implement TTL (time-to-live) for temporary documents
+   - Consider on-demand download for large documents
+
+5. **User Experience**
+   - Show storage usage information clearly to users
+   - Provide options for manual cleanup when approaching limits
+   - Implement non-disruptive background cleanups
+
+   - Ensure critical functions work even at storage limits

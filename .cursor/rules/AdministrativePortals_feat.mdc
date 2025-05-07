@@ -1,0 +1,1365 @@
+---
+description: 
+globs: **/admin_*.dart,**/portal_*.dart,**/payroll_*.dart,**/hr_*.dart,**/features/admin/**/*.dart,**/features/portal/**/*.dart,**/features/payroll/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's Administrative Portals feature
+globs: **/admin_*.dart,**/portal_*.dart,**/payroll_*.dart,**/hr_*.dart,**/features/admin/**/*.dart,**/features/portal/**/*.dart,**/features/payroll/**/*.dart
+alwaysApply: false
+---
+
+# Administrative Portals
+
+This rule provides implementation guidance for the Administrative Portals feature of HR Connect - a Flutter-based workforce management solution with offline-first capabilities.
+
+## Feature Overview
+
+The Administrative Portals feature provides specialized interfaces for:
+- **Payroll Portal**: QR code generation, attendance management, payroll processing
+- **HR Portal**: System administration, policy configuration, ultimate authority
+- Role-based access control (RBAC) with four role types
+- Device-based access control (terminal vs. personal devices)
+- Company structure management
+- System-wide override capabilities
+- Schema version management
+- Multi-factor authentication for admin accounts
+
+## Required Packages
+
+```yaml
+dependencies:
+  # State Management
+  riverpod: ^2.6.1          # Core state management
+  flutter_riverpod: ^2.6.1  # Flutter integration for Riverpod
+  
+  # Database
+  drift: ^2.26.1            # Local database
+  flutter_data: ^2.16.0     # Offline-first framework
+  
+  # UI Components
+  data_table_2: ^2.5.6      # Advanced data tables
+  syncfusion_flutter_charts: ^23.1.36  # Data visualization
+  
+  # Security
+  dart_jsonwebtoken: ^3.2.0   # JWT authentication
+  local_auth: ^2.1.6          # Biometric authentication
+  
+  # QR Code
+  qr_flutter: ^4.1.0          # QR code generation
+  
+  # Utils
+  freezed: ^2.3.5           # Immutable models
+  json_serializable: ^6.7.0  # JSON handling
+  dartz: ^0.10.1            # Functional error handling
+  decimal: ^3.2.1           # Precision decimal calculations for payroll
+```
+
+## Domain Models
+
+### User Role Model
+
+```dart
+/// User role with permissions
+@freezed
+class AdminUser with _$AdminUser {
+  const factory AdminUser({
+    required String id,
+    required String employeeId,
+    required UserRole role,
+    required List<DeviceInfo> authorizedDevices,
+    required bool mfaEnabled,
+    required DateTime lastLogin,
+    required List<String> permissionOverrides,
+    required SyncStatus syncStatus,
+  }) = _AdminUser;
+  
+  factory AdminUser.fromJson(Map<String, dynamic> json) => _$AdminUserFromJson(json);
+}
+
+/// Possible user roles
+enum UserRole {
+  employee,          // Base role
+  branchManager,     // Team management capabilities
+  payrollPortal,     // Payroll admin
+  hrPortal,          // System admin
+}
+
+/// Device information for access control
+@freezed
+class DeviceInfo with _$DeviceInfo {
+  const factory DeviceInfo({
+    required String deviceId,
+    required String deviceName,
+    required DeviceType type,
+    required DateTime registrationDate,
+    DateTime? lastUsed,
+  }) = _DeviceInfo;
+  
+  factory DeviceInfo.fromJson(Map<String, dynamic> json) => _$DeviceInfoFromJson(json);
+}
+
+enum DeviceType {
+  personal,  // Mobile device owned by employee
+  terminal,  // Fixed device at workplace
+}
+```
+
+### Company Structure Models
+
+```dart
+/// Department entity
+@freezed
+class Department with _$Department {
+  const factory Department({
+    required String id,
+    required String name,
+    required String code,
+    String? description,
+    String? managerId,
+    String? parentDepartmentId,
+    required bool isActive,
+  }) = _Department;
+  
+  factory Department.fromJson(Map<String, dynamic> json) => _$DepartmentFromJson(json);
+}
+
+/// Branch/Location entity
+@freezed
+class Branch with _$Branch {
+  const factory Branch({
+    required String id,
+    required String name,
+    required String code,
+    required Address address,
+    String? managerId,
+    required bool isActive,
+    WorkingHours? workingHours,
+    GeoPoint? location,
+  }) = _Branch;
+  
+  factory Branch.fromJson(Map<String, dynamic> json) => _$BranchFromJson(json);
+}
+
+/// Position/Job Title
+@freezed
+class Position with _$Position {
+  const factory Position({
+    required String id,
+    required String title,
+    required String code,
+    String? description,
+    String? departmentId,
+    String? reportingPositionId,
+    required bool isActive,
+  }) = _Position;
+  
+  factory Position.fromJson(Map<String, dynamic> json) => _$PositionFromJson(json);
+}
+```
+
+### Policy Configuration
+
+```dart
+/// System policy configuration
+@freezed
+class PolicyConfiguration with _$PolicyConfiguration {
+  const factory PolicyConfiguration({
+    required String id,
+    required String name,
+    required PolicyCategory category,
+    required String value,
+    required String description,
+    required bool isActive,
+    DateTime? lastModified,
+    String? modifiedBy,
+  }) = _PolicyConfiguration;
+  
+  factory PolicyConfiguration.fromJson(Map<String, dynamic> json) => 
+      _$PolicyConfigurationFromJson(json);
+}
+
+enum PolicyCategory {
+  security,
+  attendance,
+  leave,
+  payroll,
+  system,
+}
+
+/// Example policy values
+abstract class PolicyValues {
+  static const qrCodeValidityMinutes = 'qr_code_validity_minutes';
+  static const maxDevicesPerEmployee = 'max_devices_per_employee';
+  static const offlineAccessHours = 'offline_access_hours';
+  static const mfaRequiredForAdmin = 'mfa_required_for_admin';
+  static const defaultGracePeriodMinutes = 'default_grace_period_minutes';
+  static const passwordExpiryDays = 'password_expiry_days';
+}
+```
+
+## Core Use Cases
+
+### QR Code Generation for Attendance
+
+```dart
+@riverpod
+class QrCodeGenerator extends _$QrCodeGenerator {
+  @override
+  FutureOr<Unit> build() {
+    return unit;
+  }
+  
+  Future<Either<QrGenerationFailure, QrCode>> generateAttendanceQrCode({
+    required String branchId,
+    GeoPoint? location,
+  }) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      // Check portal access permissions
+      final currentUser = ref.read(currentUserProvider);
+      if (currentUser == null || 
+          (currentUser.role != UserRole.payrollPortal && 
+           currentUser.role != UserRole.hrPortal)) {
+        state = AsyncValue.error(
+          const QrGenerationFailure.insufficientPermissions(),
+          StackTrace.current,
+        );
+        return left(const QrGenerationFailure.insufficientPermissions());
+      }
+      
+      // Verify device is authorized for portal access
+      final deviceId = await _getDeviceId();
+      final deviceAuthorized = currentUser.authorizedDevices
+          .any((device) => device.deviceId == deviceId && 
+                          device.type == DeviceType.terminal);
+      
+      if (!deviceAuthorized) {
+        state = AsyncValue.error(
+          const QrGenerationFailure.unauthorizedDevice(),
+          StackTrace.current,
+        );
+        return left(const QrGenerationFailure.unauthorizedDevice());
+      }
+      
+      // Get branch details to verify existence
+      final branchRepository = ref.read(branchRepositoryProvider);
+      final branchResult = await branchRepository.getBranchById(branchId);
+      
+      return branchResult.fold(
+        (failure) {
+          state = AsyncValue.error(
+            QrGenerationFailure.branchNotFound(failure.toString()),
+            StackTrace.current,
+          );
+          return left(QrGenerationFailure.branchNotFound(failure.toString()));
+        },
+        (branch) async {
+          // Get QR code validity duration from policy
+          final policyRepository = ref.read(policyRepositoryProvider);
+          final policyResult = await policyRepository.getPolicyValue(
+            PolicyValues.qrCodeValidityMinutes,
+          );
+          
+          final validityMinutes = policyResult.fold(
+            (failure) => 15, // Default to 15 minutes
+            (value) => int.tryParse(value) ?? 15,
+          );
+          
+          // Create QR code with signature
+          final signatureService = ref.read(signatureServiceProvider);
+          final qrCode = QrCode.create(
+            branchId: branchId,
+            signatureService: signatureService,
+            location: location ?? branch.location,
+            validityMinutes: validityMinutes,
+          );
+          
+          // Log QR code generation for audit
+          final auditService = ref.read(auditServiceProvider);
+          await auditService.logAction(
+            action: AuditAction.qrCodeGeneration,
+            userId: currentUser.id,
+            details: 'Generated QR code for branch: ${branch.name}',
+            metadata: {
+              'branchId': branchId,
+              'qrCodeId': qrCode.id,
+              'validityMinutes': validityMinutes,
+            },
+          );
+          
+          state = AsyncValue.data(unit);
+          return right(qrCode);
+        },
+      );
+    } catch (e, st) {
+      state = AsyncValue.error(
+        QrGenerationFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(QrGenerationFailure.unexpected(e.toString()));
+    }
+  }
+  
+  Future<String> _getDeviceId() async {
+    // Implementation to get unique device ID
+    // ...
+    return 'device-123'; // Placeholder
+  }
+}
+```
+
+### User Role Management
+
+```dart
+@riverpod
+class UserRoleManager extends _$UserRoleManager {
+  @override
+  FutureOr<Unit> build() {
+    return unit;
+  }
+  
+  Future<Either<UserRoleFailure, AdminUser>> assignRole({
+    required String employeeId,
+    required UserRole role,
+  }) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      // Check if current user has permission to assign roles
+      final currentUser = ref.read(currentUserProvider);
+      if (currentUser == null || currentUser.role != UserRole.hrPortal) {
+        state = AsyncValue.error(
+          const UserRoleFailure.insufficientPermissions(),
+          StackTrace.current,
+        );
+        return left(const UserRoleFailure.insufficientPermissions());
+      }
+      
+      // Verify target employee exists
+      final employeeRepository = ref.read(employeeRepositoryProvider);
+      final employeeResult = await employeeRepository.getEmployeeById(employeeId);
+      
+      return employeeResult.fold(
+        (failure) {
+          state = AsyncValue.error(
+            UserRoleFailure.employeeNotFound(failure.toString()),
+            StackTrace.current,
+          );
+          return left(UserRoleFailure.employeeNotFound(failure.toString()));
+        },
+        (employee) async {
+          // Check for existing admin user
+          final userRepository = ref.read(adminUserRepositoryProvider);
+          final existingUserResult = await userRepository.getUserByEmployeeId(employeeId);
+          
+          // Create or update admin user
+          final adminUser = existingUserResult.fold(
+            (failure) => AdminUser(
+              id: const Uuid().v4(),
+              employeeId: employeeId,
+              role: role,
+              authorizedDevices: [],
+              mfaEnabled: false,
+              lastLogin: DateTime.now(),
+              permissionOverrides: [],
+              syncStatus: SyncStatus.pending,
+            ),
+            (existingUser) => existingUser.copyWith(
+              role: role,
+              syncStatus: SyncStatus.pending,
+            ),
+          );
+          
+          // Check MFA requirement based on policy for admin roles
+          if (role == UserRole.payrollPortal || role == UserRole.hrPortal) {
+            final policyRepository = ref.read(policyRepositoryProvider);
+            final mfaRequiredResult = await policyRepository.getPolicyValue(
+              PolicyValues.mfaRequiredForAdmin,
+            );
+            
+            final mfaRequired = mfaRequiredResult.fold(
+              (failure) => true, // Default to requiring MFA
+              (value) => value.toLowerCase() == 'true',
+            );
+            
+            if (mfaRequired && !adminUser.mfaEnabled) {
+              // Schedule MFA setup notification
+              final notificationService = ref.read(notificationServiceProvider);
+              await notificationService.scheduleNotification(
+                userId: employeeId,
+                title: 'MFA Setup Required',
+                body: 'Your new role requires multi-factor authentication setup.',
+                type: NotificationType.security,
+                priority: NotificationPriority.high,
+              );
+            }
+          }
+          
+          // Save admin user
+          final saveResult = await userRepository.saveUser(adminUser);
+          
+          return saveResult.fold(
+            (failure) {
+              state = AsyncValue.error(failure, StackTrace.current);
+              return left(UserRoleFailure.saveFailed(failure.toString()));
+            },
+            (_) {
+              // Log role assignment for audit
+              final auditService = ref.read(auditServiceProvider);
+              auditService.logAction(
+                action: AuditAction.roleAssignment,
+                userId: currentUser.id,
+                targetUserId: employeeId,
+                details: 'Assigned role ${role.toString()} to employee',
+                metadata: {
+                  'role': role.toString(),
+                  'employeeId': employeeId,
+                },
+              );
+              
+              state = AsyncValue.data(unit);
+              return right(adminUser);
+            },
+          );
+        },
+      );
+    } catch (e, st) {
+      state = AsyncValue.error(
+        UserRoleFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(UserRoleFailure.unexpected(e.toString()));
+    }
+  }
+}
+```
+
+## UI Implementation
+
+### Administrative Dashboard
+
+```dart
+class AdminDashboardScreen extends ConsumerWidget {
+  const AdminDashboardScreen({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final currentUserAsync = ref.watch(currentAdminUserProvider);
+    final isOffline = ref.watch(connectivityStatusProvider) == 
+        ConnectivityStatus.offline;
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Admin Dashboard'),
+        actions: [
+          if (isOffline)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Icon(Icons.cloud_off, color: Colors.amber),
+            ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () => _openSettings(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () => _confirmLogout(context, ref),
+          ),
+        ],
+      ),
+      drawer: const AdminDrawer(),
+      body: currentUserAsync.when(
+        data: (user) => _buildDashboard(context, ref, user),
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(
+          child: Text('Error loading dashboard: $error'),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildDashboard(BuildContext context, WidgetRef ref, AdminUser user) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildWelcomeCard(context, ref, user),
+          const SizedBox(height: 24),
+          _buildQuickActions(context, ref, user),
+          const SizedBox(height: 24),
+          _buildDataSummary(context, ref, user),
+          const SizedBox(height: 24),
+          _buildRecentActivities(context, ref),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildWelcomeCard(BuildContext context, WidgetRef ref, AdminUser user) {
+    final employeeAsync = ref.watch(employeeProvider(user.employeeId));
+    
+    return Card(
+      elevation: 3,
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Welcome to the ${_getRoleDisplayName(user.role)} Portal',
+              style: Theme.of(context).textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            employeeAsync.when(
+              data: (employee) => Text(
+                'Hello, ${employee.firstName} ${employee.lastName}',
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              loading: () => const Text('Loading...'),
+              error: (_, __) => const Text('Employee data unavailable'),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.access_time, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  'Last login: ${DateFormat.yMMMd().add_jm().format(user.lastLogin)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildQuickActions(BuildContext context, WidgetRef ref, AdminUser user) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Quick Actions',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 16),
+        Wrap(
+          spacing: 16.0,
+          runSpacing: 16.0,
+          children: [
+            if (user.role == UserRole.payrollPortal || user.role == UserRole.hrPortal)
+              ActionCard(
+                icon: Icons.qr_code,
+                title: 'Generate QR Code',
+                onTap: () => _navigateToQrGenerator(context),
+              ),
+            if (user.role == UserRole.hrPortal)
+              ActionCard(
+                icon: Icons.people,
+                title: 'Manage Users',
+                onTap: () => _navigateToUserManagement(context),
+              ),
+            if (user.role == UserRole.payrollPortal || user.role == UserRole.hrPortal)
+              ActionCard(
+                icon: Icons.event_note,
+                title: 'Attendance Report',
+                onTap: () => _navigateToAttendanceReport(context),
+              ),
+            if (user.role == UserRole.payrollPortal)
+              ActionCard(
+                icon: Icons.payments,
+                title: 'Process Payroll',
+                onTap: () => _navigateToPayrollProcessing(context),
+              ),
+            if (user.role == UserRole.hrPortal)
+              ActionCard(
+                icon: Icons.settings,
+                title: 'System Settings',
+                onTap: () => _navigateToSystemSettings(context),
+              ),
+            if (user.role == UserRole.branchManager || user.role == UserRole.hrPortal)
+              ActionCard(
+                icon: Icons.approval,
+                title: 'Pending Approvals',
+                onTap: () => _navigateToPendingApprovals(context),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildDataSummary(BuildContext context, WidgetRef ref, AdminUser user) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Summary',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 16),
+        user.role == UserRole.branchManager
+            ? _buildTeamSummary(context, ref, user)
+            : _buildOrganizationSummary(context, ref, user),
+      ],
+    );
+  }
+  
+  Widget _buildTeamSummary(BuildContext context, WidgetRef ref, AdminUser user) {
+    final teamStatsAsync = ref.watch(teamStatisticsProvider(user.employeeId));
+    
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: teamStatsAsync.when(
+          data: (stats) => Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildStatItem(
+                    context,
+                    title: 'Team Members',
+                    value: stats.totalEmployees.toString(),
+                    icon: Icons.people,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'Present Today',
+                    value: stats.presentToday.toString(),
+                    icon: Icons.check_circle,
+                    iconColor: Colors.green,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'Late',
+                    value: stats.lateToday.toString(),
+                    icon: Icons.access_time,
+                    iconColor: Colors.orange,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildStatItem(
+                    context,
+                    title: 'Absent',
+                    value: stats.absentToday.toString(),
+                    icon: Icons.cancel,
+                    iconColor: Colors.red,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'On Leave',
+                    value: stats.onLeave.toString(),
+                    icon: Icons.event_busy,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'Requests',
+                    value: stats.pendingRequests.toString(),
+                    icon: Icons.pending_actions,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          loading: () => const Center(
+            heightFactor: 2.0,
+            child: CircularProgressIndicator(),
+          ),
+          error: (error, _) => Center(
+            child: Text('Failed to load team statistics: $error'),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildOrganizationSummary(BuildContext context, WidgetRef ref, AdminUser user) {
+    final orgStatsAsync = ref.watch(organizationStatisticsProvider);
+    
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: orgStatsAsync.when(
+          data: (stats) => Column(
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildStatItem(
+                    context,
+                    title: 'Total Employees',
+                    value: stats.totalEmployees.toString(),
+                    icon: Icons.people,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'Departments',
+                    value: stats.departmentCount.toString(),
+                    icon: Icons.account_tree,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'Branches',
+                    value: stats.branchCount.toString(),
+                    icon: Icons.business,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  _buildStatItem(
+                    context,
+                    title: 'Attendance Rate',
+                    value: '${stats.attendanceRate.toStringAsFixed(1)}%',
+                    icon: Icons.done_all,
+                    iconColor: Colors.green,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'On Leave',
+                    value: stats.onLeaveCount.toString(),
+                    icon: Icons.event_busy,
+                  ),
+                  _buildStatItem(
+                    context,
+                    title: 'Pending Approvals',
+                    value: stats.pendingApprovals.toString(),
+                    icon: Icons.pending_actions,
+                  ),
+                ],
+              ),
+            ],
+          ),
+          loading: () => const Center(
+            heightFactor: 2.0,
+            child: CircularProgressIndicator(),
+          ),
+          error: (error, _) => Center(
+            child: Text('Failed to load statistics: $error'),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildStatItem(
+    BuildContext context, {
+    required String title,
+    required String value,
+    required IconData icon,
+    Color? iconColor,
+  }) {
+    return Column(
+      children: [
+        Icon(
+          icon,
+          color: iconColor ?? Theme.of(context).colorScheme.primary,
+          size: 28,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          value,
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        Text(
+          title,
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildRecentActivities(BuildContext context, WidgetRef ref) {
+    final activitiesAsync = ref.watch(recentActivitiesProvider);
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Recent Activities',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 16),
+        activitiesAsync.when(
+          data: (activities) {
+            if (activities.isEmpty) {
+              return const Center(
+                child: Text('No recent activities.'),
+              );
+            }
+            
+            return Card(
+              child: ListView.builder(
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                itemCount: min(activities.length, 5),
+                itemBuilder: (context, index) {
+                  final activity = activities[index];
+                  return ListTile(
+                    leading: _getActivityIcon(activity.type),
+                    title: Text(activity.title),
+                    subtitle: Text(activity.description),
+                    trailing: Text(
+                      DateFormat.yMMMd().add_jm().format(activity.timestamp),
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  );
+                },
+              ),
+            );
+          },
+          loading: () => const Center(
+            heightFactor: 2.0,
+            child: CircularProgressIndicator(),
+          ),
+          error: (error, _) => Center(
+            child: Text('Failed to load activities: $error'),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  Icon _getActivityIcon(ActivityType type) {
+    switch (type) {
+      case ActivityType.login:
+        return const Icon(Icons.login);
+      case ActivityType.userCreated:
+        return const Icon(Icons.person_add);
+      case ActivityType.roleAssigned:
+        return const Icon(Icons.admin_panel_settings);
+      case ActivityType.qrGenerated:
+        return const Icon(Icons.qr_code);
+      case ActivityType.payrollProcessed:
+        return const Icon(Icons.payments);
+      case ActivityType.systemConfigChanged:
+        return const Icon(Icons.settings);
+      default:
+        return const Icon(Icons.event_note);
+    }
+  }
+  
+  String _getRoleDisplayName(UserRole role) {
+    switch (role) {
+      case UserRole.payrollPortal:
+        return 'Payroll';
+      case UserRole.hrPortal:
+        return 'HR';
+      case UserRole.branchManager:
+        return 'Manager';
+      default:
+        return 'Employee';
+    }
+  }
+  
+  // Navigation methods
+  void _navigateToQrGenerator(BuildContext context) {
+    // Implementation
+  }
+  
+  void _navigateToUserManagement(BuildContext context) {
+    // Implementation
+  }
+  
+  void _navigateToAttendanceReport(BuildContext context) {
+    // Implementation
+  }
+  
+  void _navigateToPayrollProcessing(BuildContext context) {
+    // Implementation
+  }
+  
+  void _navigateToSystemSettings(BuildContext context) {
+    // Implementation
+  }
+  
+  void _navigateToPendingApprovals(BuildContext context) {
+    // Implementation
+  }
+  
+  void _openSettings(BuildContext context) {
+    // Implementation
+  }
+  
+  void _confirmLogout(BuildContext context, WidgetRef ref) {
+    // Implementation
+  }
+}
+```
+
+## Business Rules
+
+### 1. Role-Based Access Control (RBAC)
+
+- **Employee (Base Role)**:
+  - Can view and edit own profile
+  - Can scan QR codes for attendance
+  - Can submit leave requests
+  - Cannot access administrative features
+
+- **Branch Manager**:
+  - Extends Employee role
+  - Can view team member profiles
+  - Can approve team member requests
+  - Can view team attendance records
+  - Cannot access system-wide configuration
+
+- **Payroll Portal**:
+  - Can generate QR codes for attendance
+  - Can view organization-wide attendance
+  - Can process payroll and adjust entries
+  - Can generate payroll reports
+  - Cannot modify system configurations
+
+- **HR Portal**:
+  - Ultimate authority with system-wide access
+  - Can configure policies and permissions
+  - Can manage company structure
+  - Can assign roles to users
+  - Can override all access restrictions
+
+### 2. Device-Based Access Control
+
+- **Terminal Devices**:
+  - Fixed devices at workplace locations
+  - Required for QR code generation
+  - Can access administrative portals
+  - Must be registered by HR Portal users
+
+- **Personal Devices**:
+  - Mobile devices owned by employees
+  - Limited to 2 devices per employee (configurable)
+  - Used primarily for attendance scanning
+  - Cannot access administrative portals
+
+### 3. Multi-Factor Authentication
+
+- **MFA Requirements**:
+  - Mandatory for HR Portal and Payroll Portal users
+  - Optional for Branch Managers and Employees
+  - Options include SMS, authenticator app, or biometric
+  - Required for critical operations (payroll processing, policy changes)
+
+- **Authentication Rules**:
+  - Sessions expire after 8 hours of inactivity
+  - Password complexity requirements must be met
+  - Failed login attempts are logged and limited
+  - Role elevation requires additional verification
+
+### 4. QR Code Security
+
+- **Generation Rules**:
+  - Only Payroll Portal and HR Portal users can generate QR codes
+  - QR codes expire after 15 minutes (configurable)
+  - Each QR includes digital signature and timestamps
+  - Terminal devices are required for QR generation
+
+- **Validation Rules**:
+  - Signature verification is mandatory
+  - Expired QR codes are rejected
+  - Replay attacks are prevented with nonce tracking
+  - Geolocation validation is optional (configurable)
+
+### 5. Audit and Compliance
+
+- **Logging Requirements**:
+  - All administrative actions must be logged
+  - Logs must include user ID, timestamp, action, and affected resources
+  - Critical operations require reasons to be documented
+  - Audit trails cannot be modified or deleted
+
+- **Compliance Settings**:
+  - GDPR compliance settings for data handling
+  - Data retention policies can be configured
+  - Privacy settings for employee information access
+  - Regional labor law settings
+
+## Repositories
+
+### Admin User Repository
+
+```dart
+abstract class AdminUserRepository {
+  /// Get admin user by ID
+  Future<Either<UserFailure, AdminUser>> getUserById(String id);
+  
+  /// Get admin user by employee ID
+  Future<Either<UserFailure, AdminUser>> getUserByEmployeeId(String employeeId);
+  
+  /// Save (create or update) admin user
+  Future<Either<UserFailure, Unit>> saveUser(AdminUser user);
+  
+  /// Remove admin user (revoke special permissions)
+  Future<Either<UserFailure, Unit>> removeUser(String id);
+  
+  /// Get users by role
+  Future<Either<UserFailure, List<AdminUser>>> getUsersByRole(UserRole role);
+  
+  /// Authorize device for user
+  Future<Either<UserFailure, Unit>> authorizeDevice({
+    required String userId,
+    required DeviceInfo device,
+  });
+  
+  /// Revoke device authorization
+  Future<Either<UserFailure, Unit>> revokeDevice({
+    required String userId,
+    required String deviceId,
+  });
+  
+  /// Get currently authenticated admin user
+  Stream<AdminUser?> watchCurrentUser();
+}
+```
+
+### Policy Repository
+
+```dart
+abstract class PolicyRepository {
+  /// Get all policy configurations
+  Future<Either<PolicyFailure, List<PolicyConfiguration>>> getAllPolicies();
+  
+  /// Get policies by category
+  Future<Either<PolicyFailure, List<PolicyConfiguration>>> getPoliciesByCategory(
+    PolicyCategory category,
+  );
+  
+  /// Get single policy configuration by ID
+  Future<Either<PolicyFailure, PolicyConfiguration>> getPolicyById(String id);
+  
+  /// Get policy value by name
+  Future<Either<PolicyFailure, String>> getPolicyValue(String name);
+  
+  /// Save policy configuration
+  Future<Either<PolicyFailure, Unit>> savePolicy(PolicyConfiguration policy);
+  
+  /// Update policy value
+  Future<Either<PolicyFailure, Unit>> updatePolicyValue({
+    required String name,
+    required String value,
+    required String modifiedBy,
+  });
+  
+  /// Watch policy changes
+  Stream<PolicyConfiguration> watchPolicy(String name);
+}
+```
+
+### Organization Structure Repository
+
+```dart
+abstract class OrganizationRepository {
+  // Department operations
+  Future<Either<OrgFailure, List<Department>>> getAllDepartments();
+  Future<Either<OrgFailure, Department>> getDepartmentById(String id);
+  Future<Either<OrgFailure, Unit>> saveDepartment(Department department);
+  
+  // Branch operations
+  Future<Either<OrgFailure, List<Branch>>> getAllBranches();
+  Future<Either<OrgFailure, Branch>> getBranchById(String id);
+  Future<Either<OrgFailure, Unit>> saveBranch(Branch branch);
+  
+  // Position operations
+  Future<Either<OrgFailure, List<Position>>> getAllPositions();
+  Future<Either<OrgFailure, Position>> getPositionById(String id);
+  Future<Either<OrgFailure, Unit>> savePosition(Position position);
+  
+  // Organizational relationships
+  Future<Either<OrgFailure, List<String>>> getApprovalChain({
+    required String employeeId,
+    required RequestType requestType,
+  });
+  
+  Future<Either<OrgFailure, List<String>>> getEmployeesByManager(String managerId);
+  
+  // Organization statistics
+  Future<Either<OrgFailure, OrganizationStatistics>> getOrganizationStatistics();
+}
+```
+
+### Audit Repository
+
+```dart
+abstract class AuditRepository {
+  /// Log an audit event
+  Future<Either<AuditFailure, Unit>> logAuditEvent(AuditEvent event);
+  
+  /// Get audit events with filtering
+  Future<Either<AuditFailure, List<AuditEvent>>> getAuditEvents({
+    String? userId,
+    String? targetId,
+    AuditAction? action,
+    DateTimeRange? dateRange,
+    int? limit,
+    int? offset,
+  });
+  
+  /// Get recent audit events
+  Future<Either<AuditFailure, List<AuditEvent>>> getRecentEvents(int limit);
+  
+  /// Export audit log
+  Future<Either<AuditFailure, String>> exportAuditLog({
+    DateTimeRange dateRange,
+    String? userId,
+    AuditAction? action,
+  });
+}
+```
+
+## Testing Guidelines
+
+### 1. Unit Testing Role-Based Access
+
+```dart
+void main() {
+  late PermissionVerifier permissionVerifier;
+  
+  setUp(() {
+    permissionVerifier = PermissionVerifier();
+  });
+  
+  group('PermissionVerifier', () {
+    test('should grant employee access to permitted resources', () {
+      // Arrange
+      const userRole = UserRole.employee;
+      const resource = 'view_own_profile';
+      
+      // Act
+      final hasAccess = permissionVerifier.hasPermission(userRole, resource);
+      
+      // Assert
+      expect(hasAccess, true);
+    });
+    
+    test('should deny employee access to restricted resources', () {
+      // Arrange
+      const userRole = UserRole.employee;
+      const resource = 'generate_qr_code';
+      
+      // Act
+      final hasAccess = permissionVerifier.hasPermission(userRole, resource);
+      
+      // Assert
+      expect(hasAccess, false);
+    });
+    
+    test('should grant access to branch managers for team resources', () {
+      // Arrange
+      const userRole = UserRole.branchManager;
+      const resource = 'view_team_attendance';
+      
+      // Act
+      final hasAccess = permissionVerifier.hasPermission(userRole, resource);
+      
+      // Assert
+      expect(hasAccess, true);
+    });
+    
+    test('should grant HR Portal access to all resources', () {
+      // Arrange
+      const userRole = UserRole.hrPortal;
+      const resources = [
+        'view_own_profile',
+        'generate_qr_code',
+        'view_team_attendance',
+        'manage_roles',
+        'configure_policies',
+      ];
+      
+      // Act & Assert
+      for (final resource in resources) {
+        expect(
+          permissionVerifier.hasPermission(userRole, resource),
+          true,
+          reason: 'HR Portal should have access to $resource',
+        );
+      }
+    });
+    
+    // More tests for other roles and resources
+  });
+}
+```
+
+### 2. Widget Testing Admin Dashboard
+
+```dart
+void main() {
+  testWidgets('AdminDashboardScreen displays correct UI elements based on user role', 
+    (WidgetTester tester) async {
+      // Arrange - Setup for HR Portal user
+      final mockAdminUser = AdminUser(
+        id: 'admin-123',
+        employeeId: 'emp-123',
+        role: UserRole.hrPortal,
+        authorizedDevices: [],
+        mfaEnabled: true,
+        lastLogin: DateTime.now(),
+        permissionOverrides: [],
+        syncStatus: SyncStatus.synced,
+      );
+      
+      final mockEmployee = Employee(
+        id: 'emp-123',
+        firstName: 'Jane',
+        lastName: 'Smith',
+        email: 'jane@example.com',
+        dateOfBirth: DateTime(1985, 5, 15),
+        gender: Gender.female,
+        employeeCode: 'EMP-123',
+        status: EmploymentStatus.active,
+        hireDate: DateTime(2020, 1, 15),
+        syncStatus: SyncStatus.synced,
+      );
+      
+      final mockOrgStats = OrganizationStatistics(
+        totalEmployees: 250,
+        departmentCount: 8,
+        branchCount: 5,
+        attendanceRate: 92.5,
+        onLeaveCount: 12,
+        pendingApprovals: 15,
+      );
+      
+      // Mock providers
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            currentAdminUserProvider.overrideWithValue(
+              AsyncValue.data(mockAdminUser),
+            ),
+            employeeProvider(mockAdminUser.employeeId).overrideWithValue(
+              AsyncValue.data(mockEmployee),
+            ),
+            organizationStatisticsProvider.overrideWithValue(
+              AsyncValue.data(mockOrgStats),
+            ),
+            recentActivitiesProvider.overrideWithValue(
+              AsyncValue.data([]),
+            ),
+            connectivityStatusProvider.overrideWithValue(
+              ConnectivityStatus.online,
+            ),
+          ],
+          child: const MaterialApp(
+            home: AdminDashboardScreen(),
+          ),
+        ),
+      );
+      
+      await tester.pumpAndSettle();
+      
+      // Assert
+      expect(find.text('Welcome to the HR Portal'), findsOneWidget);
+      expect(find.text('Hello, Jane Smith'), findsOneWidget);
+      
+      // Check HR-specific quick actions
+      expect(find.text('Generate QR Code'), findsOneWidget);
+      expect(find.text('Manage Users'), findsOneWidget);
+      expect(find.text('System Settings'), findsOneWidget);
+      
+      // Check organization stats
+      expect(find.text('Total Employees'), findsOneWidget);
+      expect(find.text('250'), findsOneWidget);
+      expect(find.text('92.5%'), findsOneWidget);
+      
+      // Now test with Payroll Portal role
+      final mockPayrollUser = mockAdminUser.copyWith(
+        role: UserRole.payrollPortal,
+      );
+      
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            currentAdminUserProvider.overrideWithValue(
+              AsyncValue.data(mockPayrollUser),
+            ),
+            employeeProvider(mockAdminUser.employeeId).overrideWithValue(
+              AsyncValue.data(mockEmployee),
+            ),
+            organizationStatisticsProvider.overrideWithValue(
+              AsyncValue.data(mockOrgStats),
+            ),
+            recentActivitiesProvider.overrideWithValue(
+              AsyncValue.data([]),
+            ),
+            connectivityStatusProvider.overrideWithValue(
+              ConnectivityStatus.online,
+            ),
+          ],
+          child: const MaterialApp(
+            home: AdminDashboardScreen(),
+          ),
+        ),
+      );
+      
+      await tester.pumpAndSettle();
+      
+      // Assert Payroll-specific UI
+      expect(find.text('Welcome to the Payroll Portal'), findsOneWidget);
+      expect(find.text('Generate QR Code'), findsOneWidget);
+      expect(find.text('Process Payroll'), findsOneWidget);
+      expect(find.text('Manage Users'), findsNothing); // HR-only action
+      
+      // Similarly test for Branch Manager role
+      // ...
+    },
+  );
+  
+  // More widget tests for other screens
+}
+```
+
+## Implementation Best Practices
+
+### 1. Permission Management
+
+- Implement centralized permission service with role matrices
+- Use declarative permission checks in UI and business logic
+- Cache permission results to improve performance
+- Apply consistent security patterns across all administrative features
+- Test all permission boundaries thoroughly
+
+### 2. Performance
+
+- Optimize administrative reports for large data sets
+- Implement server-side pagination for employee lists
+- Use caching for frequently accessed policy configurations
+- Optimize UI rebuilds to only refresh changed sections
+- Apply data prefetching for common admin workflows
+
+### 3. Usability
+
+- Provide consistent UI patterns across both portals
+- Use clear status indicators for sync status
+- Implement responsive layouts for different screen sizes
+- Include helpful tooltips for administrative functions
+- Design intuitive dashboards with actionable insights
+
+### 4. Offline Support
+
+- Enable key administrative functions to work offline
+- Store policy configurations locally for offline validation
+- Implement conflict resolution for administrative changes
+- Prioritize critical data in sync queue (payroll, attendance)
+- Provide clear offline mode indicators
+
+### 5. Security
+
+- Apply multi-factor authentication for critical operations
+- Implement session timeout with configurable durations
+- Create comprehensive audit trails for all administrative actions
+- Use encrypted storage for sensitive configuration data
+
+- Test security boundaries with penetration testing

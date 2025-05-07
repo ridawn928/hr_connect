@@ -1,0 +1,1073 @@
+---
+description: Enforces Material Design 3 implementation guidelines for HR Connect, ensuring consistent UI components, responsive layouts, offline indicators, and permission-aware interfaces.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces Material Design 3 implementation guidelines for HR Connect, ensuring consistent UI components, responsive layouts, offline indicators, and permission-aware interfaces.
+globs: **/presentation/**/*.dart,**/ui/**/*.dart,**/widgets/**/*.dart,**/screens/**/*.dart,**/theme/**/*.dart
+alwaysApply: false
+---
+
+# UI Implementation with Material 3
+
+This rule provides guidance for implementing user interfaces in HR Connect following Material Design 3 guidelines, with specific patterns for responsive layouts, offline indicators, and permission-aware components.
+
+## Overview
+
+HR Connect uses Material Design 3 with the following key principles:
+- Consistent theming with light and dark mode support
+- Responsive layouts for mobile, tablet, and desktop
+- Permission-aware UI components that adapt to user roles
+- Offline status indicators for network-dependent features
+- Memory-efficient list views with pagination
+- Standardized loading, error, and empty states
+
+## Required Packages
+
+```yaml
+dependencies:
+  # UI/Material Design
+  flutter:
+    sdk: flutter
+  google_fonts: ^6.1.0       # For typography
+  material_color_utilities: ^0.8.0  # For color utilities
+  
+  # UI Components
+  data_table_2: ^2.5.6       # Enhanced data tables
+  syncfusion_flutter_charts: ^23.1.36  # Data visualization
+  flutter_form_builder: ^9.1.0  # Form handling
+  table_calendar: ^3.0.9     # Calendar view
+  cached_network_image: ^3.3.0  # Image caching
+  
+  # Responsive UI
+  flutter_screenutil: ^5.9.0  # Responsive sizing
+  auto_size_text: ^3.0.0     # Responsive text
+  
+  # State Management
+  flutter_riverpod: ^2.6.1   # UI state management
+```
+
+## Theme Implementation
+
+### Theme Configuration
+
+```dart
+// File: lib/core/theme/app_theme.dart
+import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+class AppTheme {
+  // Private constructor to prevent instantiation
+  AppTheme._();
+  
+  // Light theme
+  static ThemeData lightTheme() {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF1E88E5), // Primary blue
+      brightness: Brightness.light,
+    );
+    
+    return _buildThemeData(colorScheme);
+  }
+  
+  // Dark theme
+  static ThemeData darkTheme() {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: const Color(0xFF1E88E5), // Primary blue
+      brightness: Brightness.dark,
+    );
+    
+    return _buildThemeData(colorScheme);
+  }
+  
+  // Common theme configuration
+  static ThemeData _buildThemeData(ColorScheme colorScheme) {
+    final textTheme = _buildTextTheme();
+    
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      textTheme: textTheme,
+      
+      // AppBar theme
+      appBarTheme: AppBarTheme(
+        backgroundColor: colorScheme.surface,
+        foregroundColor: colorScheme.onSurface,
+        elevation: 0,
+        centerTitle: false,
+      ),
+      
+      // Card theme
+      cardTheme: CardTheme(
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        clipBehavior: Clip.antiAlias,
+      ),
+      
+      // Input decoration
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: colorScheme.surfaceVariant.withOpacity(0.3),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide.none,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(
+            color: colorScheme.outline.withOpacity(0.3),
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(
+            color: colorScheme.primary,
+            width: 2,
+          ),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(
+            color: colorScheme.error,
+            width: 2,
+          ),
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 16,
+          vertical: 16,
+        ),
+      ),
+      
+      // Elevated button theme
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+          padding: const EdgeInsets.symmetric(
+            horizontal: 24,
+            vertical: 16,
+          ),
+          textStyle: textTheme.titleSmall,
+        ),
+      ),
+      
+      // Other theme configurations...
+    );
+  }
+  
+  // Typography settings
+  static TextTheme _buildTextTheme() {
+    return GoogleFonts.robotoTextTheme()
+      .copyWith(
+        displayLarge: GoogleFonts.roboto(
+          fontSize: 57,
+          fontWeight: FontWeight.bold,
+        ),
+        displayMedium: GoogleFonts.roboto(
+          fontSize: 45,
+          fontWeight: FontWeight.bold,
+        ),
+        displaySmall: GoogleFonts.roboto(
+          fontSize: 36,
+          fontWeight: FontWeight.bold,
+        ),
+        headlineLarge: GoogleFonts.roboto(
+          fontSize: 32,
+          fontWeight: FontWeight.w600,
+        ),
+        headlineMedium: GoogleFonts.roboto(
+          fontSize: 28,
+          fontWeight: FontWeight.w600,
+        ),
+        headlineSmall: GoogleFonts.roboto(
+          fontSize: 24,
+          fontWeight: FontWeight.w600,
+        ),
+        titleLarge: GoogleFonts.roboto(
+          fontSize: 22,
+          fontWeight: FontWeight.w500,
+        ),
+        titleMedium: GoogleFonts.roboto(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.15,
+        ),
+        titleSmall: GoogleFonts.roboto(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.1,
+        ),
+        bodyLarge: GoogleFonts.roboto(
+          fontSize: 16,
+          fontWeight: FontWeight.normal,
+          letterSpacing: 0.5,
+        ),
+        bodyMedium: GoogleFonts.roboto(
+          fontSize: 14,
+          fontWeight: FontWeight.normal,
+          letterSpacing: 0.25,
+        ),
+        bodySmall: GoogleFonts.roboto(
+          fontSize: 12,
+          fontWeight: FontWeight.normal,
+          letterSpacing: 0.4,
+        ),
+        labelLarge: GoogleFonts.roboto(
+          fontSize: 14,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.1,
+        ),
+        labelMedium: GoogleFonts.roboto(
+          fontSize: 12,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.5,
+        ),
+        labelSmall: GoogleFonts.roboto(
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          letterSpacing: 0.5,
+        ),
+      );
+  }
+}
+```
+
+### Theme Provider with Dark Mode Support
+
+```dart
+// File: lib/core/theme/theme_provider.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'app_theme.dart';
+
+/// Enum representing the available theme modes
+enum ThemeMode {
+  system,
+  light,
+  dark,
+}
+
+/// Provider for the current theme mode
+final themeModeProvider = StateNotifierProvider<ThemeModeNotifier, ThemeMode>(
+  (ref) => ThemeModeNotifier(),
+);
+
+/// Provider for the current theme data
+final themeProvider = Provider<ThemeData>((ref) {
+  final themeMode = ref.watch(themeModeProvider);
+  final platformBrightness = WidgetsBinding.instance.platformDispatcher.platformBrightness;
+  
+  switch (themeMode) {
+    case ThemeMode.light:
+      return AppTheme.lightTheme();
+    case ThemeMode.dark:
+      return AppTheme.darkTheme();
+    case ThemeMode.system:
+    default:
+      return platformBrightness == Brightness.light
+          ? AppTheme.lightTheme()
+          : AppTheme.darkTheme();
+  }
+});
+
+/// Notifier for theme mode changes
+class ThemeModeNotifier extends StateNotifier<ThemeMode> {
+  ThemeModeNotifier() : super(ThemeMode.system);
+  
+  /// Change the theme mode
+  void setThemeMode(ThemeMode mode) {
+    state = mode;
+  }
+  
+  /// Toggle between light and dark mode
+  void toggleTheme() {
+    if (state == ThemeMode.light) {
+      state = ThemeMode.dark;
+    } else {
+      state = ThemeMode.light;
+    }
+  }
+}
+```
+
+## Responsive Layout Implementation
+
+### Responsive Layout Utility
+
+```dart
+// File: lib/core/ui/responsive_layout.dart
+import 'package:flutter/material.dart';
+
+/// Breakpoints for responsive design
+class Breakpoints {
+  static const double mobile = 600;
+  static const double tablet = 960;
+  static const double desktop = 1280;
+}
+
+/// Helper class for responsive layout
+class ResponsiveLayout extends StatelessWidget {
+  final Widget mobile;
+  final Widget? tablet;
+  final Widget? desktop;
+
+  const ResponsiveLayout({
+    required this.mobile,
+    this.tablet,
+    this.desktop,
+    super.key,
+  });
+
+  /// Helper to determine device type from context
+  static DeviceType getDeviceType(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    
+    if (width < Breakpoints.mobile) {
+      return DeviceType.mobile;
+    } else if (width < Breakpoints.tablet) {
+      return DeviceType.tablet;
+    } else {
+      return DeviceType.desktop;
+    }
+  }
+  
+  /// Helper to check if current device is mobile
+  static bool isMobile(BuildContext context) =>
+      MediaQuery.of(context).size.width < Breakpoints.mobile;
+  
+  /// Helper to check if current device is tablet
+  static bool isTablet(BuildContext context) =>
+      MediaQuery.of(context).size.width >= Breakpoints.mobile &&
+      MediaQuery.of(context).size.width < Breakpoints.tablet;
+  
+  /// Helper to check if current device is desktop
+  static bool isDesktop(BuildContext context) =>
+      MediaQuery.of(context).size.width >= Breakpoints.tablet;
+
+  @override
+  Widget build(BuildContext context) {
+    final width = MediaQuery.of(context).size.width;
+    
+    // For desktop layout
+    if (width >= Breakpoints.tablet) {
+      return desktop ?? tablet ?? mobile;
+    }
+    
+    // For tablet layout
+    if (width >= Breakpoints.mobile) {
+      return tablet ?? mobile;
+    }
+    
+    // For mobile layout
+    return mobile;
+  }
+}
+
+/// Device types for responsive design
+enum DeviceType { mobile, tablet, desktop }
+```
+
+### Responsive Grid Implementation
+
+```dart
+// File: lib/core/ui/responsive_grid.dart
+import 'package:flutter/material.dart';
+import 'responsive_layout.dart';
+
+/// A responsive grid layout that adapts to screen size
+class ResponsiveGrid extends StatelessWidget {
+  final List<Widget> children;
+  final double spacing;
+  final double runSpacing;
+  final double childAspectRatio;
+  final EdgeInsetsGeometry? padding;
+
+  const ResponsiveGrid({
+    required this.children,
+    this.spacing = 16.0,
+    this.runSpacing = 16.0,
+    this.childAspectRatio = 1.0,
+    this.padding,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: padding ?? const EdgeInsets.all(16.0),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          // Calculate the number of columns based on screen width
+          final width = constraints.maxWidth;
+          int crossAxisCount;
+          
+          if (width < Breakpoints.mobile) {
+            crossAxisCount = 1; // Mobile: 1 column
+          } else if (width < Breakpoints.tablet) {
+            crossAxisCount = 2; // Tablet: 2 columns
+          } else if (width < Breakpoints.desktop) {
+            crossAxisCount = 3; // Small desktop: 3 columns
+          } else {
+            crossAxisCount = 4; // Large desktop: 4 columns
+          }
+          
+          return GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: crossAxisCount,
+              childAspectRatio: childAspectRatio,
+              crossAxisSpacing: spacing,
+              mainAxisSpacing: runSpacing,
+            ),
+            itemCount: children.length,
+            itemBuilder: (context, index) => children[index],
+          );
+        },
+      ),
+    );
+  }
+}
+```
+
+## Offline Status Indicators
+
+### Connectivity Provider
+
+```dart
+// File: lib/core/network/connectivity_provider.dart
+import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:internet_connection_checker/internet_connection_checker.dart';
+
+/// Enum representing the connectivity status
+enum ConnectivityStatus {
+  online,
+  offline,
+  limited,
+}
+
+/// Provider for the current connectivity status
+final connectivityStatusProvider = StreamProvider<ConnectivityStatus>((ref) async* {
+  // Initial check
+  final checker = InternetConnectionChecker();
+  bool isConnected = await checker.hasConnection;
+  
+  // Stream for connectivity changes
+  yield* Connectivity().onConnectivityChanged.asyncMap((event) async {
+    if (event == ConnectivityResult.none) {
+      return ConnectivityStatus.offline;
+    } else {
+      // Verify actual internet connectivity
+      isConnected = await checker.hasConnection;
+      return isConnected 
+          ? ConnectivityStatus.online 
+          : ConnectivityStatus.limited;
+    }
+  });
+});
+```
+
+### Offline Status Banner
+
+```dart
+// File: lib/core/ui/offline_status_banner.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../network/connectivity_provider.dart';
+
+class OfflineStatusBanner extends ConsumerWidget {
+  const OfflineStatusBanner({super.key});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectivityAsyncValue = ref.watch(connectivityStatusProvider);
+    
+    return connectivityAsyncValue.when(
+      data: (status) {
+        // Don't show anything when online
+        if (status == ConnectivityStatus.online) {
+          return const SizedBox.shrink();
+        }
+        
+        return Material(
+          elevation: 2,
+          color: _getBackgroundColor(context, status),
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _getStatusIcon(status),
+                  size: 16,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _getStatusMessage(status),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+      loading: () => const SizedBox.shrink(),
+      error: (_, __) => const SizedBox.shrink(),
+    );
+  }
+  
+  Color _getBackgroundColor(BuildContext context, ConnectivityStatus status) {
+    final colorScheme = Theme.of(context).colorScheme;
+    
+    switch (status) {
+      case ConnectivityStatus.offline:
+        return colorScheme.error;
+      case ConnectivityStatus.limited:
+        return colorScheme.error.withOpacity(0.7);
+      case ConnectivityStatus.online:
+        return Colors.transparent;
+    }
+  }
+  
+  IconData _getStatusIcon(ConnectivityStatus status) {
+    switch (status) {
+      case ConnectivityStatus.offline:
+        return Icons.cloud_off_rounded;
+      case ConnectivityStatus.limited:
+        return Icons.cloud_queue_rounded;
+      case ConnectivityStatus.online:
+        return Icons.cloud_done_rounded;
+    }
+  }
+  
+  String _getStatusMessage(ConnectivityStatus status) {
+    switch (status) {
+      case ConnectivityStatus.offline:
+        return 'You are offline. Some features may be unavailable.';
+      case ConnectivityStatus.limited:
+        return 'Limited connectivity. Some features may be affected.';
+      case ConnectivityStatus.online:
+        return '';
+    }
+  }
+}
+```
+
+## Permission-Aware UI Components
+
+### Permission Guard Widget
+
+```dart
+// File: lib/core/auth/permission_guard.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../features/authentication/domain/entities/user_role.dart';
+import '../../features/authentication/domain/entities/permission.dart';
+import '../../features/authentication/presentation/providers/auth_providers.dart';
+
+/// Widget that conditionally renders content based on user permissions
+class PermissionGuard extends ConsumerWidget {
+  final Permission requiredPermission;
+  final Widget child;
+  final Widget? fallback;
+
+  const PermissionGuard({
+    required this.requiredPermission,
+    required this.child,
+    this.fallback,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authStateProvider);
+    
+    return authState.maybeWhen(
+      authenticated: (user) {
+        // Get user roles
+        final roles = user.roles;
+        
+        // Check if user has the required permission through any role
+        final hasPermission = roles.any((role) => role.hasPermission(requiredPermission));
+        
+        // Render child if user has permission, otherwise fallback
+        if (hasPermission) {
+          return child;
+        } else {
+          return fallback ?? const SizedBox.shrink();
+        }
+      },
+      orElse: () => fallback ?? const SizedBox.shrink(),
+    );
+  }
+}
+
+/// Extension on UserRole for permission checks
+extension RolePermissionX on UserRole {
+  bool hasPermission(Permission permission) {
+    switch (this) {
+      case UserRole.employee:
+        return employeePermissions.contains(permission);
+      case UserRole.branchManager:
+        return branchManagerPermissions.contains(permission);
+      case UserRole.payrollPortal:
+        return payrollPortalPermissions.contains(permission);
+      case UserRole.hrPortal:
+        return hrPortalPermissions.contains(permission);
+    }
+  }
+}
+```
+
+### PermissionAwareButton Example
+
+```dart
+// File: lib/core/ui/permission_aware_button.dart
+import 'package:flutter/material.dart';
+import '../auth/permission_guard.dart';
+import '../../features/authentication/domain/entities/permission.dart';
+
+/// Button that only appears when user has the required permission
+class PermissionAwareButton extends StatelessWidget {
+  final Permission requiredPermission;
+  final VoidCallback onPressed;
+  final Widget child;
+  final ButtonStyle? style;
+
+  const PermissionAwareButton({
+    required this.requiredPermission,
+    required this.onPressed,
+    required this.child,
+    this.style,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PermissionGuard(
+      requiredPermission: requiredPermission,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: style,
+        child: child,
+      ),
+    );
+  }
+}
+
+// Usage example
+// PermissionAwareButton(
+//   requiredPermission: Permission.createNewEmployeeCoreProfiles,
+//   onPressed: () => _addNewEmployee(),
+//   child: const Text('Add Employee'),
+// ),
+```
+
+## Memory-Efficient List Views
+
+### Paginated List View
+
+```dart
+// File: lib/core/ui/paginated_list_view.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+/// A paginated list view that efficiently loads data
+class PaginatedListView<T> extends ConsumerStatefulWidget {
+  final Future<List<T>> Function(int page, int pageSize) fetchData;
+  final Widget Function(BuildContext context, T item) itemBuilder;
+  final Widget Function(BuildContext context)? emptyBuilder;
+  final Widget Function(BuildContext context, Object error)? errorBuilder;
+  final int pageSize;
+  final bool shrinkWrap;
+  final ScrollPhysics? physics;
+  final EdgeInsetsGeometry? padding;
+
+  const PaginatedListView({
+    required this.fetchData,
+    required this.itemBuilder,
+    this.emptyBuilder,
+    this.errorBuilder,
+    this.pageSize = 20,
+    this.shrinkWrap = false,
+    this.physics,
+    this.padding,
+    super.key,
+  });
+
+  @override
+  ConsumerState<PaginatedListView<T>> createState() => _PaginatedListViewState<T>();
+}
+
+class _PaginatedListViewState<T> extends ConsumerState<PaginatedListView<T>> {
+  final List<T> _items = [];
+  bool _isLoading = false;
+  bool _hasMore = true;
+  Object? _error;
+  int _currentPage = 0;
+  final ScrollController _scrollController = ScrollController();
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMoreItems();
+    _scrollController.addListener(_scrollListener);
+  }
+
+  @override
+  void dispose() {
+    _scrollController.removeListener(_scrollListener);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _scrollListener() {
+    if (_scrollController.position.pixels >= 
+        _scrollController.position.maxScrollExtent - 200 && 
+        !_isLoading && 
+        _hasMore) {
+      _loadMoreItems();
+    }
+  }
+
+  Future<void> _loadMoreItems() async {
+    if (_isLoading || !_hasMore) return;
+    
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+    
+    try {
+      final newItems = await widget.fetchData(_currentPage, widget.pageSize);
+      
+      setState(() {
+        _items.addAll(newItems);
+        _currentPage++;
+        _isLoading = false;
+        _hasMore = newItems.length >= widget.pageSize;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e;
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _items.clear();
+      _currentPage = 0;
+      _hasMore = true;
+      _error = null;
+    });
+    
+    await _loadMoreItems();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_items.isEmpty) {
+      if (_isLoading) {
+        return const Center(child: CircularProgressIndicator());
+      }
+      
+      if (_error != null) {
+        return widget.errorBuilder?.call(context, _error!) ?? 
+               Center(child: Text('Error: ${_error.toString()}'));
+      }
+      
+      return widget.emptyBuilder?.call(context) ?? 
+             const Center(child: Text('No items found'));
+    }
+    
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.builder(
+        controller: _scrollController,
+        shrinkWrap: widget.shrinkWrap,
+        physics: widget.physics,
+        padding: widget.padding,
+        itemCount: _items.length + (_hasMore ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index >= _items.length) {
+            return const Center(
+              child: Padding(
+                padding: EdgeInsets.all(16.0),
+                child: CircularProgressIndicator(),
+              ),
+            );
+          }
+          
+          return widget.itemBuilder(context, _items[index]);
+        },
+      ),
+    );
+  }
+}
+```
+
+## Standard State Handling
+
+### Loading State
+
+```dart
+// File: lib/core/ui/loading_state.dart
+import 'package:flutter/material.dart';
+
+/// Widget to display loading state with optional message
+class LoadingState extends StatelessWidget {
+  final String? message;
+  final bool useScaffold;
+
+  const LoadingState({
+    this.message,
+    this.useScaffold = false,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final loadingContent = Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const CircularProgressIndicator(),
+          if (message != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              message!,
+              style: Theme.of(context).textTheme.bodyMedium,
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ],
+      ),
+    );
+    
+    return useScaffold
+        ? Scaffold(body: loadingContent)
+        : loadingContent;
+  }
+}
+```
+
+### Error State
+
+```dart
+// File: lib/core/ui/error_state.dart
+import 'package:flutter/material.dart';
+
+/// Widget to display error state with retry option
+class ErrorState extends StatelessWidget {
+  final String message;
+  final VoidCallback? onRetry;
+  final bool useScaffold;
+
+  const ErrorState({
+    required this.message,
+    this.onRetry,
+    this.useScaffold = false,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final errorContent = Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.error_outline,
+              size: 64,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              style: Theme.of(context).textTheme.titleMedium,
+              textAlign: TextAlign.center,
+            ),
+            if (onRetry != null) ...[
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try Again'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+    
+    return useScaffold
+        ? Scaffold(body: errorContent)
+        : errorContent;
+  }
+}
+```
+
+### Empty State
+
+```dart
+// File: lib/core/ui/empty_state.dart
+import 'package:flutter/material.dart';
+
+/// Widget to display empty state with optional action
+class EmptyState extends StatelessWidget {
+  final String message;
+  final IconData icon;
+  final String? actionLabel;
+  final VoidCallback? onAction;
+  final bool useScaffold;
+
+  const EmptyState({
+    required this.message,
+    this.icon = Icons.inbox_outlined,
+    this.actionLabel,
+    this.onAction,
+    this.useScaffold = false,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final emptyContent = Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24.0),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 64,
+              color: Theme.of(context).colorScheme.onSurfaceVariant.withOpacity(0.6),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: onAction,
+                child: Text(actionLabel!),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+    
+    return useScaffold
+        ? Scaffold(body: emptyContent)
+        : emptyContent;
+  }
+}
+```
+
+## Business Rules
+
+### UI Consistency
+- All screens must follow Material Design 3 guidelines
+- Use the provided theme configuration for all UI elements
+- Apply consistent spacing and elevation throughout the app
+- Follow the typography scale for proper text hierarchy
+
+### Responsive Design
+- All screens must work correctly on all device sizes (mobile, tablet, desktop)
+- Use responsive grid layouts for adapting to different screen widths
+- Ensure touch targets are at least 48x48dp on mobile devices
+- Apply proper keyboard navigation for desktop users
+
+### Offline Experience
+- Display clear offline indicators when connectivity is lost
+- Show sync status for pending operations
+- Provide optimistic UI updates for better user experience
+- Cache images and data for offline viewing
+
+### Permission-Based UI
+- Only show actions the user has permission to perform
+- Hide sensitive information based on user role
+- Gracefully handle permission changes during usage
+- Provide appropriate feedback when access is denied
+
+### Performance
+- Use lazy loading for lists to minimize memory usage
+- Apply pagination for large datasets
+- Implement appropriate widget caching
+- Optimize image loading with proper caching
+
+## UI Component Recommendations
+
+### For Data Display
+- Use `Card` for content containers
+- Apply `ListTile` for uniform list items
+- Implement `DataTable2` for tabular data
+- Use `SyncfusionFlutterCharts` for data visualization
+
+### For User Input
+- Use `TextField` with proper input decoration
+- Apply `FlutterFormBuilder` for complex forms
+- Implement `DateRangePicker` for date selection
+- Use `DropdownButton` for selection from predefined options
+
+### For Navigation
+- Use `BottomNavigationBar` for main navigation on mobile
+- Apply `NavigationRail` for tablet layouts
+- Implement `NavigationDrawer` for desktop layouts
+- Use `AppBar` with appropriate actions
+
+### For Status Feedback
+- Show `SnackBar` for temporary notifications
+- Use `Dialog` for important confirmations
+- Display `CircularProgressIndicator` for loading states
+- Implement `LinearProgressIndicator` for operations with known progress
+
+## Implementation Best Practices
+
+1. **Start with Theme Configuration**
+   - Configure the theme before implementing screens
+   - Use color scheme and typography consistently
+   - Apply theme extensions for custom styles
+
+2. **Apply Responsive Design Early**
+   - Use ResponsiveLayout for different device layouts
+   - Test on multiple screen sizes during development
+   - Design mobile-first, then adapt for larger screens
+
+3. **Implement State Handling**
+   - Use AsyncValue pattern for loading/error states
+   - Apply standard loading/error/empty state widgets
+   - Implement optimistic updates for better UX
+
+4. **Focus on Accessibility**
+   - Ensure proper contrast ratios for text
+   - Add semantic labels for screen readers
+   - Support keyboard navigation
+   - Test with accessibility tools
+
+5. **Optimize Performance**
+   - Use const constructors where possible
+   - Minimize unnecessary rebuilds
+   - Apply pagination for large datasets
+
+   - Optimize image loading with caching

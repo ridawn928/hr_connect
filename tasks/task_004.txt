@@ -1,0 +1,163 @@
+# Task ID: 4
+# Title: QR Code Attendance System
+# Status: pending
+# Dependencies: 3
+# Priority: high
+# Description: Implement the QR code generation and scanning functionality for attendance tracking.
+# Details:
+Integrate Mobile Scanner for QR code reading and QR Flutter for code generation. Implement time-based QR codes with embedded timestamps and digital signatures. Create the validation logic for QR codes with configurable time windows (15 minutes default). Develop the AttendanceProfile aggregate for storing attendance records. Implement status classification (ON_TIME, LATE, etc.) with configurable grace periods. Create UI components for QR code scanning and display.
+
+# Test Strategy:
+Test QR code generation with various parameters. Verify QR code validation logic with different timestamps. Test offline validation capabilities. Create widget tests for QR scanning UI. Validate security measures including nonce tracking to prevent replay attacks.
+
+# Subtasks:
+## 04-001-01. Integrate the QR Flutter package for QR code generation. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-001-02. Implement a service to generate QR codes with unique session identifiers, timestamps, and digital signatures. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-001-03. Add logic to periodically regenerate QR codes (e.g., every minute). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-001-04. Provide configuration options for QR code size, error correction, and content formatting. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-001-05. Write and run unit tests to verify QR code generation and security features. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-002-01. Integrate the Mobile Scanner package for QR code scanning. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-002-02. Implement camera permission handling and error management. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-002-03. Develop the scanner UI component with visual guides and feedback. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-002-04. Handle error scenarios (denied permissions, unrecognized QR codes, etc.). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-002-05. Write and run tests for scanner integration and error handling. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-003-01. Implement backend logic to validate digital signatures and timestamps in scanned QR codes. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-003-02. Add configurable time window validation (default 15 minutes). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-003-03. Implement security measures to prevent replay attacks (nonce tracking). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-003-04. Create error responses for invalid, expired, or tampered QR codes. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-003-05. Add logging for security audits and write tests for validation logic. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-004-01. Design the AttendanceProfile aggregate with user info, timestamps, and session details. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-004-02. Implement database operations (create, read, update) for attendance records. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-004-03. Create indexes for efficient querying by user, session, date, and status. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-004-04. Add data validation to ensure integrity of attendance records. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-004-05. Write and run unit tests for attendance data management. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-005-01. Implement logic to classify attendance as ON_TIME, LATE, etc., based on grace periods and expected times. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-005-02. Create UI components for displaying QR codes and auto-refresh functionality. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-005-03. Develop the scanner interface with real-time feedback on scan status. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-005-04. Build attendance summary views with status distributions and individual records. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 04-005-05. Implement filtering and sorting options for attendance records and write UI tests. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+

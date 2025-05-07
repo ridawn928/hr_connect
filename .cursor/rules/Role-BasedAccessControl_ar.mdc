@@ -1,0 +1,1161 @@
+---
+description: Enforces consistent implementation of Role-Based Access Control (RBAC) for HR Connect, ensuring proper permission checks at UI, service, and repository levels according to the defined role hierarchy.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces consistent implementation of Role-Based Access Control (RBAC) for HR Connect, ensuring proper permission checks at UI, service, and repository levels according to the defined role hierarchy.
+globs: **/auth/**/*.dart,**/security/**/*.dart,**/rbac/**/*.dart,**/permission/**/*.dart
+alwaysApply: false
+---
+
+# Role-Based Access Control (RBAC)
+
+This rule provides guidance for implementing Role-Based Access Control in HR Connect, ensuring proper authorization checks throughout the application to enforce the security model.
+
+## Overview
+
+HR Connect implements a comprehensive RBAC system with:
+- Four distinct roles with hierarchical permissions
+- Permission checks at UI, service, and repository levels
+- Permission-aware UI components
+- Access control for different portals and features
+- Audit logging for authorization-related events
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Auth and Security
+  flutter_secure_storage: ^9.2.4  # For secure token storage
+  jwt_decoder: ^2.0.1             # For JWT token parsing
+  
+  # State Management
+  flutter_riverpod: ^2.6.1        # For auth state and role management
+  
+  # Utilities
+  logging: ^1.2.0                 # For audit logging
+```
+
+## Role Hierarchy and Permissions
+
+### Role Definitions
+
+```dart
+// File: lib/features/auth/domain/entities/user_role.dart
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+/// Represents user roles in the HR Connect system
+enum UserRole {
+  /// Base role for all users with limited access
+  employee,
+  
+  /// Team management capabilities (extends Employee)
+  branchManager,
+  
+  /// Administrative interface for payroll processing
+  payrollPortal,
+  
+  /// System administration interface with full access
+  hrPortal,
+}
+
+/// Extension methods for UserRole
+extension UserRoleX on UserRole {
+  /// Get the display name of the role
+  String get displayName {
+    switch (this) {
+      case UserRole.employee:
+        return 'Employee';
+      case UserRole.branchManager:
+        return 'Branch Manager';
+      case UserRole.payrollPortal:
+        return 'Payroll Portal';
+      case UserRole.hrPortal:
+        return 'HR Portal';
+    }
+  }
+  
+  /// Get the role code from the RBAC matrix
+  String get code {
+    switch (this) {
+      case UserRole.employee:
+        return 'E';
+      case UserRole.branchManager:
+        return 'BM';
+      case UserRole.payrollPortal:
+        return 'PP';
+      case UserRole.hrPortal:
+        return 'HP';
+    }
+  }
+  
+  /// Check if this role has a specific permission
+  bool hasPermission(Permission permission) {
+    // Check permission based on role
+    switch (this) {
+      case UserRole.employee:
+        return _employeePermissions.contains(permission);
+      case UserRole.branchManager:
+        // Branch Manager inherits Employee permissions
+        return _branchManagerPermissions.contains(permission) ||
+               _employeePermissions.contains(permission);
+      case UserRole.payrollPortal:
+        return _payrollPortalPermissions.contains(permission);
+      case UserRole.hrPortal:
+        return _hrPortalPermissions.contains(permission);
+    }
+  }
+  
+  /// Check if this role can access a specific portal
+  bool canAccessPortal(PortalType portal) {
+    switch (portal) {
+      case PortalType.employee:
+        // All roles can access the employee portal
+        return true;
+      case PortalType.branchManager:
+        return this == UserRole.branchManager || 
+               this == UserRole.hrPortal;
+      case PortalType.payroll:
+        return this == UserRole.payrollPortal || 
+               this == UserRole.hrPortal;
+      case PortalType.hr:
+        return this == UserRole.hrPortal;
+    }
+  }
+}
+
+/// Available portals in the system
+enum PortalType {
+  employee,
+  branchManager,
+  payroll,
+  hr,
+}
+```
+
+### Permission Definitions
+
+```dart
+// File: lib/features/auth/domain/entities/permission.dart
+
+/// Permissions available in the HR Connect system
+enum Permission {
+  // Employee Core Data
+  viewOwnCoreProfile,
+  editOwnCoreProfile,
+  viewTeamMemberCoreProfiles,
+  editTeamMemberCoreProfiles,
+  createNewEmployeeCoreProfiles,
+  deactivateEmployeeAccounts,
+  viewOrganizationWideEmployeeData,
+  manageBiDirectionalManagerRelationships,
+  
+  // Authentication & Security
+  loginWithCredentials,
+  changeOwnPassword,
+  resetOtherUserPasswords,
+  viewLoginHistory,
+  configureSecurityPolicies,
+  assignModifyUserRoles,
+  grantRevokePayrollPortalAccess,
+  manageOfflineAccessPolicies,
+  
+  // Device Management
+  registerPersonalDevice,
+  viewOwnRegisteredDevices,
+  deactivateOwnDevices,
+  viewTeamDeviceRegistrations,
+  deactivateTeamMemberDevices,
+  registerTerminalDevices,
+  manageDeviceVerificationPolicies,
+  
+  // QR Code Attendance System
+  scanQrCodeForAttendance,
+  generateAttendanceQrCodes,
+  editAttendanceRecords,
+  viewOwnAttendanceHistory,
+  viewTeamAttendanceRecords,
+  viewBranchWideAttendance,
+  viewOrganizationWideAttendance,
+  configureQrTimeWindowValidation,
+  
+  // Request Management
+  submitLeaveRequests,
+  submitOvertimeRequests,
+  viewOwnLeaveBalance,
+  viewOwnRequestHistory,
+  cancelOwnRequests,
+  approveTeamLeaveRequests,
+  approveTeamOvertimeRequests,
+  overrideLeaveApprovals,
+  
+  // Payroll Management
+  viewOwnPayslip,
+  processAttendanceForPayroll,
+  adjustPayRates,
+  adjustPayrollEntries,
+  viewPreliminaryPayroll,
+  finalizePayroll,
+  approvePayroll,
+  generatePayrollReports,
+  viewTeamPayrollSummary,
+  
+  // System Configuration
+  viewSystemStatus,
+  manageIntegrationSettings,
+  configureNotificationSettings,
+  manageCompanyLocations,
+  configureHolidayCalendar,
+  manageWorkflowRules,
+  configurePayrollPortalSettings,
+  manageSchemaVersions,
+}
+
+/// Repository of role-specific permissions
+class PermissionSets {
+  // Private constructor to prevent instantiation
+  PermissionSets._();
+  
+  /// Permissions for the Employee role
+  static const Set<Permission> employeePermissions = {
+    Permission.viewOwnCoreProfile,
+    Permission.editOwnCoreProfile,
+    Permission.loginWithCredentials,
+    Permission.changeOwnPassword,
+    Permission.registerPersonalDevice,
+    Permission.viewOwnRegisteredDevices,
+    Permission.deactivateOwnDevices,
+    Permission.scanQrCodeForAttendance,
+    Permission.viewOwnAttendanceHistory,
+    Permission.submitLeaveRequests,
+    Permission.submitOvertimeRequests,
+    Permission.viewOwnLeaveBalance,
+    Permission.viewOwnRequestHistory,
+    Permission.cancelOwnRequests,
+    Permission.viewOwnPayslip,
+  };
+  
+  /// Permissions for the Branch Manager role
+  static const Set<Permission> branchManagerPermissions = {
+    // Includes Employee permissions plus:
+    Permission.viewTeamMemberCoreProfiles,
+    Permission.editTeamMemberCoreProfiles,
+    Permission.viewLoginHistory,
+    Permission.viewTeamDeviceRegistrations,
+    Permission.deactivateTeamMemberDevices,
+    Permission.viewTeamAttendanceRecords,
+    Permission.viewBranchWideAttendance,
+    Permission.approveTeamLeaveRequests,
+    Permission.approveTeamOvertimeRequests,
+    Permission.approvePayroll,
+    Permission.viewTeamPayrollSummary,
+  };
+  
+  /// Permissions for the Payroll Portal role
+  static const Set<Permission> payrollPortalPermissions = {
+    Permission.loginWithCredentials,
+    Permission.changeOwnPassword,
+    Permission.viewTeamMemberCoreProfiles,
+    Permission.editTeamMemberCoreProfiles,
+    Permission.viewOrganizationWideEmployeeData,
+    Permission.generateAttendanceQrCodes,
+    Permission.editAttendanceRecords,
+    Permission.viewTeamAttendanceRecords,
+    Permission.viewBranchWideAttendance,
+    Permission.viewOrganizationWideAttendance,
+    Permission.processAttendanceForPayroll,
+    Permission.adjustPayrollEntries,
+    Permission.viewPreliminaryPayroll,
+    Permission.finalizePayroll,
+    Permission.generatePayrollReports,
+    Permission.viewTeamPayrollSummary,
+    Permission.viewSystemStatus,
+  };
+  
+  /// Permissions for the HR Portal role
+  static const Set<Permission> hrPortalPermissions = {
+    // HR Portal has all permissions
+    Permission.viewOwnCoreProfile,
+    Permission.editOwnCoreProfile,
+    Permission.viewTeamMemberCoreProfiles,
+    Permission.editTeamMemberCoreProfiles,
+    Permission.createNewEmployeeCoreProfiles,
+    Permission.deactivateEmployeeAccounts,
+    Permission.viewOrganizationWideEmployeeData,
+    Permission.manageBiDirectionalManagerRelationships,
+    
+    Permission.loginWithCredentials,
+    Permission.changeOwnPassword,
+    Permission.resetOtherUserPasswords,
+    Permission.viewLoginHistory,
+    Permission.configureSecurityPolicies,
+    Permission.assignModifyUserRoles,
+    Permission.grantRevokePayrollPortalAccess,
+    Permission.manageOfflineAccessPolicies,
+    
+    // Additional HR Portal permissions...
+    // Add all remaining permissions here
+  };
+}
+```
+
+## Authentication State Management
+
+### Auth State Provider
+
+```dart
+// File: lib/features/auth/presentation/providers/auth_provider.dart
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
+import '../../domain/entities/user.dart';
+import '../../domain/repositories/auth_repository.dart';
+
+part 'auth_provider.freezed.dart';
+
+/// Auth state for the application
+@freezed
+class AuthState with _$AuthState {
+  const factory AuthState.initial() = _Initial;
+  const factory AuthState.loading() = _Loading;
+  const factory AuthState.authenticated(User user) = _Authenticated;
+  const factory AuthState.unauthenticated() = _Unauthenticated;
+  const factory AuthState.error(String message) = _Error;
+}
+
+/// Provider for auth state
+final authStateProvider = StateNotifierProvider<AuthStateNotifier, AuthState>(
+  (ref) => AuthStateNotifier(
+    ref.watch(authRepositoryProvider),
+  ),
+);
+
+/// Notifier for auth state changes
+class AuthStateNotifier extends StateNotifier<AuthState> {
+  final AuthRepository _authRepository;
+  
+  AuthStateNotifier(this._authRepository) : super(const AuthState.initial()) {
+    _initialize();
+  }
+  
+  /// Initialize auth state
+  Future<void> _initialize() async {
+    state = const AuthState.loading();
+    
+    final userResult = await _authRepository.getCurrentUser();
+    
+    state = userResult.fold(
+      (failure) => const AuthState.unauthenticated(),
+      (user) => AuthState.authenticated(user),
+    );
+  }
+  
+  /// Login with credentials
+  Future<void> login(String email, String password) async {
+    state = const AuthState.loading();
+    
+    final result = await _authRepository.login(email, password);
+    
+    state = result.fold(
+      (failure) => AuthState.error(failure.message),
+      (user) => AuthState.authenticated(user),
+    );
+  }
+  
+  /// Logout the current user
+  Future<void> logout() async {
+    await _authRepository.logout();
+    state = const AuthState.unauthenticated();
+  }
+  
+  /// Get the current authenticated user
+  User? get currentUser {
+    return state.maybeWhen(
+      authenticated: (user) => user,
+      orElse: () => null,
+    );
+  }
+  
+  /// Check if the current user has a specific permission
+  bool hasPermission(Permission permission) {
+    return state.maybeWhen(
+      authenticated: (user) {
+        return user.roles.any((role) => role.hasPermission(permission));
+      },
+      orElse: () => false,
+    );
+  }
+  
+  /// Check if the current user can access a portal
+  bool canAccessPortal(PortalType portal) {
+    return state.maybeWhen(
+      authenticated: (user) {
+        return user.roles.any((role) => role.canAccessPortal(portal));
+      },
+      orElse: () => false,
+    );
+  }
+}
+```
+
+## Permission-Based UI Components
+
+### Permission Guard Widget
+
+```dart
+// File: lib/features/auth/presentation/widgets/permission_guard.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../domain/entities/permission.dart';
+import '../providers/auth_provider.dart';
+
+/// Widget that conditionally renders content based on user permissions
+class PermissionGuard extends ConsumerWidget {
+  final Permission requiredPermission;
+  final Widget child;
+  final Widget? fallback;
+
+  const PermissionGuard({
+    required this.requiredPermission,
+    required this.child,
+    this.fallback,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasPermission = ref.watch(
+      authStateProvider.select(
+        (state) => state.maybeWhen(
+          authenticated: (user) => user.hasPermission(requiredPermission),
+          orElse: () => false,
+        ),
+      ),
+    );
+    
+    if (hasPermission) {
+      return child;
+    } else {
+      return fallback ?? const SizedBox.shrink();
+    }
+  }
+}
+```
+
+### Permission-Aware UI Components
+
+```dart
+// File: lib/features/auth/presentation/widgets/permission_aware_button.dart
+import 'package:flutter/material.dart';
+import '../../domain/entities/permission.dart';
+import 'permission_guard.dart';
+
+/// Button that is only enabled when the user has the required permission
+class PermissionAwareButton extends StatelessWidget {
+  final Permission requiredPermission;
+  final VoidCallback onPressed;
+  final Widget child;
+  final ButtonStyle? style;
+
+  const PermissionAwareButton({
+    required this.requiredPermission,
+    required this.onPressed,
+    required this.child,
+    this.style,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PermissionGuard(
+      requiredPermission: requiredPermission,
+      child: ElevatedButton(
+        onPressed: onPressed,
+        style: style,
+        child: child,
+      ),
+      fallback: ElevatedButton(
+        onPressed: null, // Disabled button
+        style: style,
+        child: child,
+      ),
+    );
+  }
+}
+
+// File: lib/features/auth/presentation/widgets/permission_aware_action.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../domain/entities/permission.dart';
+import '../providers/auth_provider.dart';
+
+/// Widget that changes the child's behavior based on permissions
+class PermissionAwareAction extends ConsumerWidget {
+  final Permission requiredPermission;
+  final Widget child;
+  final VoidCallback onAuthorizedTap;
+  final VoidCallback? onUnauthorizedTap;
+  final String? unauthorizedMessage;
+
+  const PermissionAwareAction({
+    required this.requiredPermission,
+    required this.child,
+    required this.onAuthorizedTap,
+    this.onUnauthorizedTap,
+    this.unauthorizedMessage,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasPermission = ref.watch(
+      authStateProvider.select(
+        (state) => state.maybeWhen(
+          authenticated: (user) => user.hasPermission(requiredPermission),
+          orElse: () => false,
+        ),
+      ),
+    );
+    
+    return GestureDetector(
+      onTap: () {
+        if (hasPermission) {
+          onAuthorizedTap();
+        } else if (onUnauthorizedTap != null) {
+          onUnauthorizedTap!();
+        } else if (unauthorizedMessage != null) {
+          // Show permission denied message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(unauthorizedMessage!),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      },
+      child: child,
+    );
+  }
+}
+```
+
+### Portal Access Guard
+
+```dart
+// File: lib/features/auth/presentation/widgets/portal_access_guard.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../domain/entities/user_role.dart';
+import '../providers/auth_provider.dart';
+
+/// Widget that guards access to specific portals
+class PortalAccessGuard extends ConsumerWidget {
+  final PortalType portalType;
+  final Widget child;
+  final Widget? fallback;
+
+  const PortalAccessGuard({
+    required this.portalType,
+    required this.child,
+    this.fallback,
+    super.key,
+  });
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasAccess = ref.watch(
+      authStateProvider.select(
+        (state) => state.maybeWhen(
+          authenticated: (user) => user.canAccessPortal(portalType),
+          orElse: () => false,
+        ),
+      ),
+    );
+    
+    if (hasAccess) {
+      return child;
+    } else {
+      return fallback ?? _buildAccessDenied(context);
+    }
+  }
+  
+  Widget _buildAccessDenied(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.lock_outline,
+              size: 64,
+              color: Theme.of(context).colorScheme.error,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'Access Denied',
+              style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'You do not have permission to access this portal.',
+              style: Theme.of(context).textTheme.bodyLarge,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: const Text('Go Back'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+## Service-Level Authorization
+
+### Permission Check Decorator
+
+```dart
+// File: lib/features/auth/domain/services/permission_checker.dart
+import 'package:dartz/dartz.dart';
+import '../entities/permission.dart';
+import '../entities/user.dart';
+import '../errors/auth_failure.dart';
+
+/// Service for permission checks
+class PermissionChecker {
+  /// Check if a user has a specific permission
+  static bool hasPermission(User user, Permission permission) {
+    return user.roles.any((role) => role.hasPermission(permission));
+  }
+  
+  /// Check multiple permissions
+  static bool hasPermissions(User user, List<Permission> permissions) {
+    return permissions.every((permission) => hasPermission(user, permission));
+  }
+  
+  /// Authorize a function call with permission check
+  static Future<Either<AuthFailure, T>> authorizeCall<T>({
+    required User? user,
+    required Permission permission,
+    required Future<Either<AuthFailure, T>> Function() call,
+  }) async {
+    if (user == null) {
+      return Left(const AuthFailure.unauthenticated());
+    }
+    
+    if (!hasPermission(user, permission)) {
+      return Left(AuthFailure.unauthorized(
+        'User does not have permission: ${permission.name}',
+      ));
+    }
+    
+    return call();
+  }
+}
+
+// Usage example for service method
+Future<Either<Failure, List<AttendanceRecord>>> getTeamAttendance(
+  String managerId,
+  DateTime startDate,
+  DateTime endDate,
+) async {
+  return PermissionChecker.authorizeCall(
+    user: await _authRepository.getCurrentUser(),
+    permission: Permission.viewTeamAttendanceRecords,
+    call: () => _attendanceRepository.getTeamAttendance(
+      managerId,
+      startDate,
+      endDate,
+    ),
+  );
+}
+```
+
+### Authorization Interceptor
+
+```dart
+// File: lib/core/network/auth_interceptor.dart
+import 'package:dio/dio.dart';
+import '../../features/auth/domain/entities/permission.dart';
+import '../../features/auth/domain/repositories/auth_repository.dart';
+
+/// Interceptor that adds authorization headers and checks permissions
+class AuthInterceptor extends Interceptor {
+  final AuthRepository _authRepository;
+  
+  AuthInterceptor(this._authRepository);
+  
+  @override
+  void onRequest(
+    RequestOptions options,
+    RequestInterceptorHandler handler,
+  ) async {
+    // Check if the request requires authentication
+    final requiresAuth = options.extra['requiresAuth'] ?? true;
+    
+    if (requiresAuth) {
+      final userResult = await _authRepository.getCurrentUser();
+      
+      final user = userResult.fold(
+        (failure) => null,
+        (user) => user,
+      );
+      
+      if (user == null) {
+        // User is not authenticated
+        handler.reject(
+          DioError(
+            requestOptions: options,
+            type: DioErrorType.cancel,
+            error: 'User is not authenticated',
+          ),
+        );
+        return;
+      }
+      
+      // Check if the request requires specific permissions
+      final requiredPermission = options.extra['requiredPermission'] as Permission?;
+      
+      if (requiredPermission != null) {
+        final hasPermission = user.hasPermission(requiredPermission);
+        
+        if (!hasPermission) {
+          // User doesn't have the required permission
+          handler.reject(
+            DioError(
+              requestOptions: options,
+              type: DioErrorType.cancel,
+              error: 'User does not have permission: ${requiredPermission.name}',
+            ),
+          );
+          return;
+        }
+      }
+      
+      // Add authorization header
+      final authTokenResult = await _authRepository.getAuthToken();
+      
+      final token = authTokenResult.fold(
+        (failure) => null,
+        (token) => token,
+      );
+      
+      if (token != null) {
+        options.headers['Authorization'] = 'Bearer $token';
+      }
+    }
+    
+    handler.next(options);
+  }
+}
+```
+
+## Repository-Level Access Control
+
+```dart
+// File: lib/features/employee/data/repositories/employee_repository_impl.dart
+import 'package:dartz/dartz.dart';
+import '../../domain/entities/employee.dart';
+import '../../domain/repositories/employee_repository.dart';
+import '../../../auth/domain/entities/permission.dart';
+import '../../../auth/domain/repositories/auth_repository.dart';
+import '../../../auth/domain/services/permission_checker.dart';
+
+class EmployeeRepositoryImpl implements EmployeeRepository {
+  final EmployeeLocalDataSource _localDataSource;
+  final EmployeeRemoteDataSource _remoteDataSource;
+  final AuthRepository _authRepository;
+  
+  EmployeeRepositoryImpl(
+    this._localDataSource,
+    this._remoteDataSource,
+    this._authRepository,
+  );
+  
+  @override
+  Future<Either<Failure, Employee>> getEmployeeById(String id) async {
+    final userResult = await _authRepository.getCurrentUser();
+    
+    return userResult.fold(
+      (failure) => Left(failure),
+      (user) async {
+        // Check permissions based on relationship to the requested employee
+        final isOwnProfile = user.id == id;
+        
+        if (isOwnProfile) {
+          // Users can always view their own profile
+          if (!user.hasPermission(Permission.viewOwnCoreProfile)) {
+            return Left(AuthFailure.unauthorized(
+              'User does not have permission to view own profile',
+            ));
+          }
+        } else {
+          // For others' profiles, check team or organization permissions
+          final isTeamMember = await _isTeamMember(user.id, id);
+          
+          if (isTeamMember && !user.hasPermission(Permission.viewTeamMemberCoreProfiles)) {
+            return Left(AuthFailure.unauthorized(
+              'User does not have permission to view team member profiles',
+            ));
+          }
+          
+          if (!isTeamMember && 
+              !user.hasPermission(Permission.viewOrganizationWideEmployeeData)) {
+            return Left(AuthFailure.unauthorized(
+              'User does not have permission to view organization-wide employee data',
+            ));
+          }
+        }
+        
+        // Proceed with data access
+        try {
+          final localEmployee = await _localDataSource.getEmployeeById(id);
+          
+          // Rest of the repository implementation...
+          return Right(localEmployee);
+        } catch (e) {
+          return Left(CacheFailure(e.toString()));
+        }
+      },
+    );
+  }
+  
+  Future<bool> _isTeamMember(String managerId, String employeeId) async {
+    // Implementation to check if employeeId is a team member of managerId
+    final teamMembers = await _localDataSource.getTeamMembers(managerId);
+    return teamMembers.any((member) => member.id == employeeId);
+  }
+  
+  // Other repository methods with similar permission checks...
+}
+```
+
+## Audit Logging for Authorization Events
+
+```dart
+// File: lib/features/auth/data/services/auth_audit_service.dart
+import 'package:logging/logging.dart';
+import '../../domain/entities/user.dart';
+import '../../domain/entities/permission.dart';
+
+/// Service for logging authorization-related events
+class AuthAuditService {
+  final Logger _logger;
+  
+  AuthAuditService(): _logger = Logger('AuthAudit');
+  
+  /// Log a successful authentication
+  void logAuthentication(User user) {
+    _logger.info('User authenticated: ${user.id} (${user.email})');
+  }
+  
+  /// Log a failed authentication
+  void logAuthenticationFailure(String email, String reason) {
+    _logger.warning('Authentication failed for $email: $reason');
+  }
+  
+  /// Log a logout event
+  void logLogout(User user) {
+    _logger.info('User logged out: ${user.id} (${user.email})');
+  }
+  
+  /// Log a permission check
+  void logPermissionCheck(User user, Permission permission, bool result) {
+    final action = result ? 'granted' : 'denied';
+    _logger.info(
+      'Permission $action for ${user.id}: ${permission.name}',
+    );
+  }
+  
+  /// Log an access denied event
+  void logAccessDenied(User? user, String resource, Permission permission) {
+    final userId = user?.id ?? 'unauthenticated';
+    _logger.warning(
+      'Access denied for $userId to $resource (required permission: ${permission.name})',
+    );
+  }
+  
+  /// Log a role change
+  void logRoleChange(String targetUserId, UserRole oldRole, UserRole newRole, String performedBy) {
+    _logger.info(
+      'Role changed for $targetUserId from ${oldRole.name} to ${newRole.name} by $performedBy',
+    );
+  }
+}
+```
+
+## Business Rules
+
+### Role Hierarchy
+- **Employee (E)**: Base role for all users with limited access to their own data
+- **Branch Manager (BM)**: Extends Employee with team management capabilities
+- **Payroll Portal (PP)**: Administrative interface for payroll with broad access
+- **HR Portal (HP)**: System administration with ultimate authority and overrides
+
+### Permission Inheritance
+- Branch Managers inherit all Employee permissions
+- HR Portal role can perform any operation in the system
+- Permission checks should respect the inheritance hierarchy
+
+### Access Control Layers
+- UI Layer: Hide/disable UI elements based on permissions
+- Service Layer: Verify permissions before executing business logic
+- Repository Layer: Apply permissions when accessing data
+- API Layer: Validate permissions at the server level
+
+### Cross-Cutting Concerns
+- Authorization checks must be applied consistently across all layers
+- Audit logging is required for security-related events
+- Permission-based caching to prevent unauthorized data exposure
+- Graceful handling of permission changes during active sessions
+
+## Implementation Patterns
+
+### Pattern: Permission-Based UI
+
+Implement UI elements that adapt based on user permissions:
+
+```dart
+// Example: Attendance screen with permission-aware sections
+@override
+Widget build(BuildContext context) {
+  return Scaffold(
+    appBar: AppBar(title: const Text('Attendance Management')),
+    body: Column(
+      children: [
+        // All employees can access their own attendance
+        const PersonalAttendanceSection(),
+        
+        // Only managers and above can see team attendance
+        PermissionGuard(
+          requiredPermission: Permission.viewTeamAttendanceRecords,
+          child: const TeamAttendanceSection(),
+        ),
+        
+        // Only HR Portal can generate reports
+        PermissionGuard(
+          requiredPermission: Permission.viewOrganizationWideAttendance,
+          child: const OrganizationAttendanceReportSection(),
+        ),
+        
+        // Only Payroll and HR can edit attendance
+        PermissionGuard(
+          requiredPermission: Permission.editAttendanceRecords,
+          child: AttendanceEditButton(onPressed: () {
+            // Edit attendance logic
+          }),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+### Pattern: Authorized Service Calls
+
+Wrap service calls with authorization checks:
+
+```dart
+class AttendanceService {
+  final AuthRepository _authRepository;
+  final AttendanceRepository _attendanceRepository;
+  
+  AttendanceService(this._authRepository, this._attendanceRepository);
+  
+  // Get attendance for a team
+  Future<Either<Failure, List<AttendanceRecord>>> getTeamAttendance(
+    String managerId,
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    final userResult = await _authRepository.getCurrentUser();
+    
+    return userResult.fold(
+      (failure) => Left(failure),
+      (user) {
+        // Check if user has permission
+        if (!user.hasPermission(Permission.viewTeamAttendanceRecords)) {
+          return Left(AuthFailure.unauthorized(
+            'User does not have permission to view team attendance',
+          ));
+        }
+        
+        // Ensure user is only accessing their own team
+        if (user.id != managerId && 
+            !user.hasPermission(Permission.viewOrganizationWideAttendance)) {
+          return Left(AuthFailure.unauthorized(
+            'User can only access their own team\'s attendance',
+          ));
+        }
+        
+        // Proceed with the repository call
+        return _attendanceRepository.getTeamAttendance(
+          managerId,
+          startDate,
+          endDate,
+        );
+      },
+    );
+  }
+}
+```
+
+### Pattern: Data Filtering Based on Permissions
+
+Filter data based on user permissions:
+
+```dart
+class EmployeeDataSource {
+  final AuthRepository _authRepository;
+  final Database _database;
+  
+  EmployeeDataSource(this._authRepository, this._database);
+  
+  Future<List<Employee>> getEmployees() async {
+    // Get all employees from database
+    final allEmployees = await _database.employeeDao.getAllEmployees();
+    
+    // Get current user
+    final userResult = await _authRepository.getCurrentUser();
+    
+    return userResult.fold(
+      (failure) => [],
+      (user) {
+        // Filter based on permissions
+        if (user.hasPermission(Permission.viewOrganizationWideEmployeeData)) {
+          // User can see all employees
+          return allEmployees;
+        } else if (user.hasPermission(Permission.viewTeamMemberCoreProfiles)) {
+          // User can only see their team
+          return allEmployees.where((employee) => 
+            employee.managerId == user.id
+          ).toList();
+        } else {
+          // User can only see themselves
+          return allEmployees.where((employee) => 
+            employee.id == user.id
+          ).toList();
+        }
+      },
+    );
+  }
+}
+```
+
+## Testing RBAC
+
+```dart
+// Testing RBAC implementation
+void main() {
+  group('Role-Based Access Control', () {
+    late MockAuthRepository authRepository;
+    late UserRole employeeRole;
+    late UserRole managerRole;
+    late UserRole payrollRole;
+    late UserRole hrRole;
+    
+    setUp(() {
+      authRepository = MockAuthRepository();
+      employeeRole = UserRole.employee;
+      managerRole = UserRole.branchManager;
+      payrollRole = UserRole.payrollPortal;
+      hrRole = UserRole.hrPortal;
+    });
+    
+    test('Employee role should have basic permissions', () {
+      // Test that employee has expected permissions
+      expect(employeeRole.hasPermission(Permission.viewOwnCoreProfile), true);
+      expect(employeeRole.hasPermission(Permission.editOwnCoreProfile), true);
+      expect(employeeRole.hasPermission(Permission.viewOwnAttendanceHistory), true);
+      expect(employeeRole.hasPermission(Permission.submitLeaveRequests), true);
+      
+      // Test that employee does not have manager permissions
+      expect(employeeRole.hasPermission(Permission.viewTeamAttendanceRecords), false);
+      expect(employeeRole.hasPermission(Permission.approveTeamLeaveRequests), false);
+      
+      // Test portal access
+      expect(employeeRole.canAccessPortal(PortalType.employee), true);
+      expect(employeeRole.canAccessPortal(PortalType.branchManager), false);
+      expect(employeeRole.canAccessPortal(PortalType.payroll), false);
+      expect(employeeRole.canAccessPortal(PortalType.hr), false);
+    });
+    
+    test('Branch Manager should inherit Employee permissions', () {
+      // Test that manager has employee permissions
+      expect(managerRole.hasPermission(Permission.viewOwnCoreProfile), true);
+      expect(managerRole.hasPermission(Permission.editOwnCoreProfile), true);
+      
+      // Test that manager has additional permissions
+      expect(managerRole.hasPermission(Permission.viewTeamAttendanceRecords), true);
+      expect(managerRole.hasPermission(Permission.approveTeamLeaveRequests), true);
+      
+      // Test portal access
+      expect(managerRole.canAccessPortal(PortalType.employee), true);
+      expect(managerRole.canAccessPortal(PortalType.branchManager), true);
+      expect(managerRole.canAccessPortal(PortalType.payroll), false);
+      expect(managerRole.canAccessPortal(PortalType.hr), false);
+    });
+    
+    // Additional tests for Payroll and HR Portal roles...
+    
+    test('Permission checks should work with user having multiple roles', () {
+      // Create a user with multiple roles
+      final user = User(
+        id: 'user-1',
+        email: 'test@example.com',
+        roles: [UserRole.employee, UserRole.branchManager],
+      );
+      
+      // User should have permissions from both roles
+      expect(user.hasPermission(Permission.viewOwnCoreProfile), true);
+      expect(user.hasPermission(Permission.viewTeamAttendanceRecords), true);
+      
+      // User should not have permissions from other roles
+      expect(user.hasPermission(Permission.finalizePayroll), false);
+    });
+    
+    test('PermissionChecker should correctly authorize calls based on permissions', () async {
+      // Create a user with employee role
+      final employee = User(
+        id: 'emp-1',
+        email: 'employee@example.com',
+        roles: [UserRole.employee],
+      );
+      
+      // Test authorized call for permission the user has
+      final authorizedResult = await PermissionChecker.authorizeCall(
+        user: employee,
+        permission: Permission.viewOwnAttendanceHistory,
+        call: () async => Right('Success'),
+      );
+      
+      expect(authorizedResult.isRight(), true);
+      
+      // Test unauthorized call for permission the user doesn't have
+      final unauthorizedResult = await PermissionChecker.authorizeCall(
+        user: employee,
+        permission: Permission.viewTeamAttendanceRecords,
+        call: () async => Right('Success'),
+      );
+      
+      expect(unauthorizedResult.isLeft(), true);
+      expect(
+        unauthorizedResult.fold(
+          (failure) => failure is AuthFailure,
+          (_) => false,
+        ),
+        true,
+      );
+    });
+  });
+}
+
+```

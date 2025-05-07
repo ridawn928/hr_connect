@@ -1,0 +1,163 @@
+# Task ID: 7
+# Title: Administrative Portals
+# Status: pending
+# Dependencies: 5, 6
+# Priority: medium
+# Description: Implement the Payroll Portal and HR Portal with role-based access control.
+# Details:
+Create the Payroll Portal with QR generation, attendance management, and payroll processing capabilities. Implement the HR Portal for system administration and policy configuration. Develop the role-based permission system with Employee, Branch Manager, Payroll Portal, and HR Portal roles. Implement company structure management. Create UI components for administrative interfaces including data tables and charts. Add multi-factor authentication for admin accounts.
+
+# Test Strategy:
+Test role-based access controls with different user types. Verify administrative functions work correctly. Test permission-based UI adaptation. Create widget tests for administrative UI components. Validate security measures for administrative actions including audit trails.
+
+# Subtasks:
+## 07-001-01. Design the permission management system and define the four roles (Employee, Branch Manager, Payroll Portal, HR Portal). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-001-02. Implement role assignment functionality and role hierarchy logic. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-001-03. Create database tables for roles, permissions, and user-role assignments. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-001-04. Develop API endpoints for role management and permission verification. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-001-05. Write unit tests to verify permission logic and role enforcement. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-002-01. Create database models for departments, branches, positions, and reporting relationships. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-002-02. Implement CRUD operations for managing organizational units. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-002-03. Design and implement UI components for visualizing and editing the company structure. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-002-04. Add validation rules to ensure structural integrity. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-002-05. Integrate with the RBAC system to enforce permissions for structure management. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-003-01. Create the QR code generation system for employee attendance tracking. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-003-02. Implement attendance record management with clock-in/clock-out functionality. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-003-03. Build the payroll calculation engine (process attendance data, apply policies, generate payment records). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-003-04. Design database schemas and API endpoints for attendance and payroll data. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-003-05. Implement basic reporting functionality for payroll data. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-004-01. Develop the HR Portal interface with policy management tools. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-004-02. Implement system configuration screens for company-wide settings. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-004-03. Create administrative dashboards with data visualization components (tables, charts, graphs). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-004-04. Build user management interfaces for HR administrators. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-004-05. Add audit logging for administrative actions and ensure all components respect RBAC permissions. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-005-01. Research and select an appropriate MFA solution. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-005-02. Implement MFA enrollment and verification workflows. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-005-03. Create backup code generation for account recovery. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-005-04. Add MFA status indicators in the user interface and implement security policies for MFA requirements. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 07-005-05. Create admin tools to manage MFA settings and provide documentation for administrators. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+

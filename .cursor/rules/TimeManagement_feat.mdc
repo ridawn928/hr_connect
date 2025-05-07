@@ -1,0 +1,998 @@
+---
+description: 
+globs: /leave_*.dart,/time_.dart,**/request_.dart,/overtime_*.dart,/features/time_management/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's Comprehensive Time Management feature
+globs: **/leave_*.dart,**/time_*.dart,**/request_*.dart,**/overtime_*.dart,**/features/time_management/**/*.dart
+alwaysApply: false
+---
+
+# Comprehensive Time Management
+
+This rule provides implementation guidance for the Comprehensive Time Management feature of HR Connect - a Flutter-based workforce management solution with offline-first capabilities.
+
+## Feature Overview
+
+The Comprehensive Time Management feature enables:
+- Leave management (Emergency, Personal, Sick, Vacation, etc.)
+- Approval workflows with escalation paths for disapproved requests
+- Overtime request processing with configurable limits
+- Undertime tracking and management
+- Remote work request processing
+- Time-based business rules (24h emergency leave, 30-day personal leave)
+- Team schedule visualization
+- Absence and late arrival management
+
+## Required Packages
+
+```yaml
+dependencies:
+  # State Management
+  riverpod: ^2.6.1          # Core state management
+  flutter_riverpod: ^2.6.1  # Flutter integration for Riverpod
+  
+  # Database
+  drift: ^2.26.1            # Local database for requests/time off
+  flutter_data: ^2.16.0     # Offline-first framework
+  
+  # UI Components
+  table_calendar: ^3.0.9    # Calendar visualization
+  flutter_form_builder: ^9.1.0  # Form handling and validation
+  
+  # Utils
+  freezed: ^2.3.5          # Immutable models
+  dartz: ^0.10.1           # Functional error handling
+  uuid: ^3.0.7             # Unique identifiers
+  intl: ^0.20.2            # Date/time formatting
+```
+
+## Domain Models
+
+### RequestProfile Aggregate
+
+```dart
+/// Base class for all request types
+@freezed
+class Request with _$Request {
+  const factory Request({
+    required String id,
+    required String employeeId,
+    required RequestType type,
+    required RequestStatus status,
+    required DateTime submissionDate,
+    String? reason,
+    String? rejectionReason,
+    String? reviewerId,
+    DateTime? reviewDate,
+    required SyncStatus syncStatus,
+  }) = _Request;
+  
+  factory Request.fromJson(Map<String, dynamic> json) => _$RequestFromJson(json);
+}
+
+/// Types of time-related requests
+enum RequestType {
+  leave,
+  overtime,
+  undertime,
+  remoteWork,
+}
+
+/// Status values for requests
+enum RequestStatus {
+  pending,
+  approved,
+  rejected,
+  escalated,
+  cancelled,
+}
+
+/// Leave-specific request details
+@freezed
+class LeaveRequest with _$LeaveRequest {
+  const factory LeaveRequest({
+    required Request baseRequest,
+    required LeaveType type,
+    required DateTime startDate,
+    required DateTime endDate,
+    required bool halfDay,
+    String? attachmentUrl,
+    required List<String> approvalChain,
+  }) = _LeaveRequest;
+  
+  factory LeaveRequest.fromJson(Map<String, dynamic> json) => 
+      _$LeaveRequestFromJson(json);
+}
+
+/// Types of leave
+enum LeaveType {
+  emergency,
+  personal,
+  sick,
+  vacation,
+  maternity,
+  paternity,
+  bereavement,
+}
+
+/// Overtime request details
+@freezed
+class OvertimeRequest with _$OvertimeRequest {
+  const factory OvertimeRequest({
+    required Request baseRequest,
+    required DateTime date,
+    required TimeOfDay startTime,
+    required TimeOfDay endTime,
+    required Duration hours,
+    required String projectCode,
+    required List<String> approvalChain,
+  }) = _OvertimeRequest;
+  
+  factory OvertimeRequest.fromJson(Map<String, dynamic> json) => 
+      _$OvertimeRequestFromJson(json);
+}
+
+/// Remote work request
+@freezed
+class RemoteWorkRequest with _$RemoteWorkRequest {
+  const factory RemoteWorkRequest({
+    required Request baseRequest,
+    required DateTime startDate,
+    required DateTime endDate,
+    required String location,
+    required bool hasReliableInternet,
+    required List<String> approvalChain,
+  }) = _RemoteWorkRequest;
+  
+  factory RemoteWorkRequest.fromJson(Map<String, dynamic> json) => 
+      _$RemoteWorkRequestFromJson(json);
+}
+```
+
+## Core Use Cases
+
+### Leave Request Submission
+
+```dart
+@riverpod
+class LeaveRequestSubmitter extends _$LeaveRequestSubmitter {
+  @override
+  FutureOr<Unit> build() {
+    return unit;
+  }
+  
+  Future<Either<RequestFailure, LeaveRequest>> submitLeaveRequest({
+    required String employeeId,
+    required LeaveType type,
+    required DateTime startDate,
+    required DateTime endDate,
+    required bool halfDay,
+    required String reason,
+    String? attachmentUrl,
+  }) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      // Validate request
+      if (endDate.isBefore(startDate)) {
+        state = AsyncValue.error(
+          const RequestFailure.invalidDateRange(),
+          StackTrace.current,
+        );
+        return left(const RequestFailure.invalidDateRange());
+      }
+      
+      // Check leave balance
+      final leaveBalanceRepository = ref.read(leaveBalanceRepositoryProvider);
+      final balanceResult = await leaveBalanceRepository.checkLeaveBalance(
+        employeeId: employeeId,
+        leaveType: type,
+      );
+      
+      final availableDays = balanceResult.fold(
+        (failure) => 0,
+        (balance) => balance.availableDays,
+      );
+      
+      final requestedDays = _calculateWorkingDays(startDate, endDate);
+      final adjustedRequestedDays = halfDay 
+          ? requestedDays - 0.5 
+          : requestedDays;
+      
+      if (adjustedRequestedDays > availableDays) {
+        state = AsyncValue.error(
+          RequestFailure.insufficientBalance(
+            requested: adjustedRequestedDays,
+            available: availableDays,
+          ),
+          StackTrace.current,
+        );
+        return left(RequestFailure.insufficientBalance(
+          requested: adjustedRequestedDays,
+          available: availableDays,
+        ));
+      }
+      
+      // Apply business rules for emergency leave
+      if (type == LeaveType.emergency) {
+        final now = DateTime.now();
+        final difference = startDate.difference(now).inHours;
+        
+        if (difference > 24) {
+          state = AsyncValue.error(
+            const RequestFailure.emergencyLeaveTimeframeExceeded(),
+            StackTrace.current,
+          );
+          return left(const RequestFailure.emergencyLeaveTimeframeExceeded());
+        }
+      }
+      
+      // Apply business rules for personal leave
+      if (type == LeaveType.personal) {
+        final now = DateTime.now();
+        final difference = startDate.difference(now).inDays;
+        
+        if (difference < 30) {
+          state = AsyncValue.error(
+            const RequestFailure.insufficientAdvanceNotice(),
+            StackTrace.current,
+          );
+          return left(const RequestFailure.insufficientAdvanceNotice());
+        }
+      }
+      
+      // Get approval chain
+      final organizationRepository = ref.read(organizationRepositoryProvider);
+      final approvalChainResult = await organizationRepository.getApprovalChain(
+        employeeId: employeeId,
+        requestType: RequestType.leave,
+      );
+      
+      final approvalChain = approvalChainResult.fold(
+        (failure) => <String>[],
+        (chain) => chain,
+      );
+      
+      if (approvalChain.isEmpty) {
+        state = AsyncValue.error(
+          const RequestFailure.approvalChainUnavailable(),
+          StackTrace.current,
+        );
+        return left(const RequestFailure.approvalChainUnavailable());
+      }
+      
+      // Create request
+      final requestRepository = ref.read(requestRepositoryProvider);
+      final baseRequest = Request(
+        id: const Uuid().v4(),
+        employeeId: employeeId,
+        type: RequestType.leave,
+        status: RequestStatus.pending,
+        submissionDate: DateTime.now(),
+        reason: reason,
+        syncStatus: SyncStatus.pending,
+      );
+      
+      final leaveRequest = LeaveRequest(
+        baseRequest: baseRequest,
+        type: type,
+        startDate: startDate,
+        endDate: endDate,
+        halfDay: halfDay,
+        attachmentUrl: attachmentUrl,
+        approvalChain: approvalChain,
+      );
+      
+      final result = await requestRepository.submitLeaveRequest(leaveRequest);
+      
+      result.fold(
+        (failure) => state = AsyncValue.error(failure, StackTrace.current),
+        (success) => state = AsyncValue.data(unit),
+      );
+      
+      return result;
+    } catch (e, st) {
+      state = AsyncValue.error(
+        RequestFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(RequestFailure.unexpected(e.toString()));
+    }
+  }
+  
+  double _calculateWorkingDays(DateTime start, DateTime end) {
+    // Implementation to calculate working days excluding weekends and holidays
+    // ...
+    return 5.0; // Placeholder
+  }
+}
+```
+
+### Request Approval
+
+```dart
+@riverpod
+class RequestApprover extends _$RequestApprover {
+  @override
+  FutureOr<Unit> build() {
+    return unit;
+  }
+  
+  Future<Either<RequestFailure, Unit>> approveRequest({
+    required String requestId,
+    required String reviewerId,
+    String? comments,
+  }) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      final requestRepository = ref.read(requestRepositoryProvider);
+      
+      // Get request details
+      final requestResult = await requestRepository.getRequestById(requestId);
+      
+      final request = requestResult.fold(
+        (failure) {
+          state = AsyncValue.error(failure, StackTrace.current);
+          return null;
+        },
+        (request) => request,
+      );
+      
+      if (request == null) {
+        return left(const RequestFailure.requestNotFound());
+      }
+      
+      // Verify reviewer is in approval chain
+      final isValidReviewer = await _verifyReviewer(request, reviewerId);
+      
+      if (!isValidReviewer) {
+        state = AsyncValue.error(
+          const RequestFailure.unauthorizedReviewer(),
+          StackTrace.current,
+        );
+        return left(const RequestFailure.unauthorizedReviewer());
+      }
+      
+      // Process approval
+      final result = await requestRepository.approveRequest(
+        requestId: requestId,
+        reviewerId: reviewerId,
+        comments: comments,
+        reviewDate: DateTime.now(),
+      );
+      
+      // Update leave balance if it's a leave request and the final approval
+      if (request.type == RequestType.leave && _isFinalApproval(request, reviewerId)) {
+        final leaveRequest = await requestRepository.getLeaveRequestById(requestId);
+        
+        leaveRequest.fold(
+          (failure) => null,
+          (leaveRequest) async {
+            final leaveBalanceRepository = ref.read(leaveBalanceRepositoryProvider);
+            await leaveBalanceRepository.deductLeaveBalance(
+              employeeId: request.employeeId,
+              leaveType: leaveRequest.type,
+              days: _calculateWorkingDays(
+                leaveRequest.startDate,
+                leaveRequest.endDate,
+              ),
+              halfDay: leaveRequest.halfDay,
+            );
+          },
+        );
+      }
+      
+      result.fold(
+        (failure) => state = AsyncValue.error(failure, StackTrace.current),
+        (success) => state = AsyncValue.data(unit),
+      );
+      
+      return result;
+    } catch (e, st) {
+      state = AsyncValue.error(
+        RequestFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(RequestFailure.unexpected(e.toString()));
+    }
+  }
+  
+  Future<bool> _verifyReviewer(Request request, String reviewerId) async {
+    // Implementation to verify reviewer is in approval chain
+    // ...
+    return true; // Placeholder
+  }
+  
+  bool _isFinalApproval(Request request, String reviewerId) {
+    // Implementation to check if this is the final approval in chain
+    // ...
+    return true; // Placeholder
+  }
+  
+  double _calculateWorkingDays(DateTime start, DateTime end) {
+    // Implementation to calculate working days excluding weekends and holidays
+    // ...
+    return 5.0; // Placeholder
+  }
+}
+```
+
+## UI Implementation
+
+### Calendar View with Team Schedule
+
+```dart
+class TeamCalendarScreen extends ConsumerWidget {
+  final String teamId;
+  
+  const TeamCalendarScreen({
+    Key? key,
+    required this.teamId,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final teamMembersAsync = ref.watch(teamMembersProvider(teamId));
+    final selectedDay = ref.watch(selectedDayProvider);
+    final focusedDay = ref.watch(focusedDayProvider);
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Team Schedule'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            onPressed: () => _showFilterDialog(context, ref),
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
+          TableCalendar(
+            firstDay: DateTime.now().subtract(const Duration(days: 365)),
+            lastDay: DateTime.now().add(const Duration(days: 365)),
+            focusedDay: focusedDay,
+            selectedDayPredicate: (day) {
+              return isSameDay(selectedDay, day);
+            },
+            onDaySelected: (selected, focused) {
+              ref.read(selectedDayProvider.notifier).state = selected;
+              ref.read(focusedDayProvider.notifier).state = focused;
+            },
+            eventLoader: (day) {
+              return ref.read(calendarEventsProvider(teamId, day));
+            },
+            calendarStyle: const CalendarStyle(
+              markersMaxCount: 3,
+              markerSize: 8,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Expanded(
+            child: teamMembersAsync.when(
+              data: (members) => _buildScheduleList(context, ref, members),
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (error, stack) => Center(
+                child: Text('Error loading team members: $error'),
+              ),
+            ),
+          ),
+        ],
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _navigateToRequestForm(context),
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+  
+  Widget _buildScheduleList(
+    BuildContext context, 
+    WidgetRef ref, 
+    List<Employee> members,
+  ) {
+    final selectedDate = ref.watch(selectedDayProvider);
+    final eventsAsync = ref.watch(
+      dayEventsProvider(teamId, selectedDate),
+    );
+    
+    return eventsAsync.when(
+      data: (events) {
+        return ListView.builder(
+          itemCount: members.length,
+          itemBuilder: (context, index) {
+            final employee = members[index];
+            final employeeEvents = events.where(
+              (event) => event.employeeId == employee.id,
+            ).toList();
+            
+            return EmployeeScheduleCard(
+              employee: employee,
+              events: employeeEvents,
+              date: selectedDate,
+            );
+          },
+        );
+      },
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, stack) => Center(
+        child: Text('Error loading events: $error'),
+      ),
+    );
+  }
+  
+  void _showFilterDialog(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => const ScheduleFilterDialog(),
+    );
+  }
+  
+  void _navigateToRequestForm(BuildContext context) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => const RequestFormScreen(),
+      ),
+    );
+  }
+}
+```
+
+## Business Rules
+
+### 1. Leave Request Rules
+
+- **Emergency Leave**:
+  - Can be requested up to 24 hours before start date
+  - Requires manager approval
+  - Limited to 5 days per year (configurable)
+  - Can be approved retroactively in certain cases
+
+- **Personal Leave**:
+  - Must be requested at least 30 days in advance
+  - Requires manager and department head approval
+  - Typical allocation is 15-30 days per year based on tenure
+  - Unused days can carry over to next year (configurable limit)
+
+- **Sick Leave**:
+  - No advance notice required
+  - Medical certificate required for 3+ consecutive days
+  - Limited to 10-15 days per year (configurable)
+  - Can be taken in half-day increments
+
+- **Vacation Leave**:
+  - Must be requested at least 14 days in advance
+  - Requires manager approval
+  - Limited by employee's accrued balance
+  - Blackout periods may apply during peak business times
+
+### 2. Approval Workflow Rules
+
+- Requests follow a predefined approval chain based on:
+  - Request type
+  - Employee's department
+  - Employee's position level
+  - Duration requested
+
+- Approval chain typically includes:
+  - Direct manager (first level)
+  - Department head (for extended periods)
+  - HR representative (final approval)
+
+- Escalation occurs when:
+  - Request is rejected at any level
+  - Approval is not processed within 48 hours
+  - Employee specifically requests escalation
+
+- Each approver can:
+  - Approve request
+  - Reject request (with reason)
+  - Request modifications
+  - Escalate to higher authority
+
+### 3. Overtime Rules
+
+- **Pre-approval Requirements**:
+  - Must be requested at least 24 hours in advance
+  - Exceptions allowed for emergencies with proper justification
+  - Maximum of 4 hours per day and 20 hours per week
+
+- **Calculation Rules**:
+  - Regular overtime: 1.25x hourly rate (weekdays)
+  - Weekend overtime: 1.5x hourly rate
+  - Holiday overtime: 2x hourly rate
+  - Minimum billing unit is 30 minutes
+
+- **Recording Requirements**:
+  - Start and end times must be logged
+  - Project code/reason must be provided
+  - Manager verification required
+
+### 4. Remote Work Rules
+
+- **Eligibility Criteria**:
+  - Position must be compatible with remote work
+  - Employee must have reliable internet access
+  - Previous performance evaluations must meet minimum threshold
+
+- **Duration and Frequency**:
+  - Maximum of 3 consecutive days per week (configurable)
+  - Limited to 10 days per month (configurable)
+  - Extended remote work requires special approval
+
+- **Connectivity Requirements**:
+  - Must maintain communication availability during work hours
+  - Required to attend virtual meetings as scheduled
+  - Must verify internet reliability before approval
+
+## Repositories
+
+### Request Repository
+
+```dart
+abstract class RequestRepository {
+  /// Submit a leave request
+  Future<Either<RequestFailure, LeaveRequest>> submitLeaveRequest(
+    LeaveRequest request,
+  );
+  
+  /// Submit an overtime request
+  Future<Either<RequestFailure, OvertimeRequest>> submitOvertimeRequest(
+    OvertimeRequest request,
+  );
+  
+  /// Submit a remote work request
+  Future<Either<RequestFailure, RemoteWorkRequest>> submitRemoteWorkRequest(
+    RemoteWorkRequest request,
+  );
+  
+  /// Get a request by ID
+  Future<Either<RequestFailure, Request>> getRequestById(String id);
+  
+  /// Get a leave request by ID
+  Future<Either<RequestFailure, LeaveRequest>> getLeaveRequestById(String id);
+  
+  /// Get pending requests for approval
+  Future<Either<RequestFailure, List<Request>>> getPendingRequests({
+    required String reviewerId,
+    RequestType? type,
+  });
+  
+  /// Approve a request
+  Future<Either<RequestFailure, Unit>> approveRequest({
+    required String requestId,
+    required String reviewerId,
+    String? comments,
+    required DateTime reviewDate,
+  });
+  
+  /// Reject a request
+  Future<Either<RequestFailure, Unit>> rejectRequest({
+    required String requestId,
+    required String reviewerId,
+    required String rejectionReason,
+    required DateTime reviewDate,
+  });
+  
+  /// Escalate a request
+  Future<Either<RequestFailure, Unit>> escalateRequest({
+    required String requestId,
+    required String initiatorId,
+    String? reason,
+  });
+  
+  /// Get request history for an employee
+  Future<Either<RequestFailure, List<Request>>> getRequestHistory({
+    required String employeeId,
+    RequestType? type,
+    RequestStatus? status,
+    DateTimeRange? dateRange,
+  });
+  
+  /// Watch employee's pending requests
+  Stream<List<Request>> watchPendingRequests(String employeeId);
+}
+```
+
+### Leave Balance Repository
+
+```dart
+abstract class LeaveBalanceRepository {
+  /// Get leave balance for an employee
+  Future<Either<LeaveBalanceFailure, LeaveBalance>> getLeaveBalance({
+    required String employeeId,
+    required LeaveType leaveType,
+  });
+  
+  /// Get all leave balances for an employee
+  Future<Either<LeaveBalanceFailure, List<LeaveBalance>>> getAllLeaveBalances(
+    String employeeId,
+  );
+  
+  /// Deduct leave balance when leave is approved
+  Future<Either<LeaveBalanceFailure, Unit>> deductLeaveBalance({
+    required String employeeId,
+    required LeaveType leaveType,
+    required double days,
+    bool halfDay = false,
+  });
+  
+  /// Add leave balance (for accruals or corrections)
+  Future<Either<LeaveBalanceFailure, Unit>> addLeaveBalance({
+    required String employeeId,
+    required LeaveType leaveType,
+    required double days,
+    required String reason,
+    required String approvedBy,
+  });
+  
+  /// Reset leave balances (typically done annually)
+  Future<Either<LeaveBalanceFailure, Unit>> resetLeaveBalances({
+    required List<String> employeeIds,
+    required Map<LeaveType, double> initialBalances,
+    required double carryOverLimit,
+    required String approvedBy,
+  });
+}
+```
+
+## Testing Guidelines
+
+### 1. Unit Testing Leave Request Validation
+
+```dart
+void main() {
+  late LeaveRequestValidator validator;
+  late MockLeaveBalanceRepository mockLeaveBalanceRepository;
+  
+  setUp(() {
+    mockLeaveBalanceRepository = MockLeaveBalanceRepository();
+    validator = LeaveRequestValidator(mockLeaveBalanceRepository);
+  });
+  
+  group('LeaveRequestValidator', () {
+    test('should reject leave request with end date before start date', () async {
+      // Arrange
+      final startDate = DateTime(2025, 5, 10);
+      final endDate = DateTime(2025, 5, 8);
+      final employeeId = 'emp-123';
+      final leaveType = LeaveType.personal;
+      
+      // Act
+      final result = await validator.validate(
+        employeeId: employeeId,
+        leaveType: leaveType,
+        startDate: startDate,
+        endDate: endDate,
+      );
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<InvalidDateRangeFailure>()),
+        (_) => fail('Should return a failure'),
+      );
+    });
+    
+    test('should reject emergency leave requested more than 24 hours in advance', () async {
+      // Arrange
+      final now = DateTime.now();
+      final startDate = now.add(const Duration(hours: 30));
+      final endDate = startDate.add(const Duration(days: 1));
+      final employeeId = 'emp-123';
+      
+      when(() => mockLeaveBalanceRepository.getLeaveBalance(
+        employeeId: employeeId,
+        leaveType: LeaveType.emergency,
+      )).thenAnswer((_) async => right(
+        LeaveBalance(
+          employeeId: employeeId,
+          leaveType: LeaveType.emergency,
+          availableDays: 5.0,
+          usedDays: 0.0,
+          year: 2025,
+        ),
+      ));
+      
+      // Act
+      final result = await validator.validate(
+        employeeId: employeeId,
+        leaveType: LeaveType.emergency,
+        startDate: startDate,
+        endDate: endDate,
+      );
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<EmergencyLeaveTimeframeExceededFailure>()),
+        (_) => fail('Should return a failure'),
+      );
+    });
+    
+    test('should reject leave request when insufficient balance', () async {
+      // Arrange
+      final startDate = DateTime(2025, 5, 10);
+      final endDate = DateTime(2025, 5, 14); // 5 working days
+      final employeeId = 'emp-123';
+      final leaveType = LeaveType.vacation;
+      
+      when(() => mockLeaveBalanceRepository.getLeaveBalance(
+        employeeId: employeeId,
+        leaveType: leaveType,
+      )).thenAnswer((_) async => right(
+        LeaveBalance(
+          employeeId: employeeId,
+          leaveType: leaveType,
+          availableDays: 3.0, // Less than requested
+          usedDays: 2.0,
+          year: 2025,
+        ),
+      ));
+      
+      // Act
+      final result = await validator.validate(
+        employeeId: employeeId,
+        leaveType: leaveType,
+        startDate: startDate,
+        endDate: endDate,
+      );
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) {
+          expect(failure, isA<InsufficientBalanceFailure>());
+          final insufficientBalanceFailure = failure as InsufficientBalanceFailure;
+          expect(insufficientBalanceFailure.requested, 5.0);
+          expect(insufficientBalanceFailure.available, 3.0);
+        },
+        (_) => fail('Should return a failure'),
+      );
+    });
+    
+    // More tests for personal leave advance notice, etc.
+  });
+}
+```
+
+### 2. Widget Testing Approval UI
+
+```dart
+void main() {
+  testWidgets('RequestApprovalScreen shows request details and approval buttons', 
+    (WidgetTester tester) async {
+      // Arrange
+      final mockRequestRepository = MockRequestRepository();
+      final mockRequest = Request(
+        id: 'req-123',
+        employeeId: 'emp-456',
+        type: RequestType.leave,
+        status: RequestStatus.pending,
+        submissionDate: DateTime(2025, 5, 1),
+        reason: 'Family vacation',
+        syncStatus: SyncStatus.synced,
+      );
+      
+      final mockLeaveRequest = LeaveRequest(
+        baseRequest: mockRequest,
+        type: LeaveType.vacation,
+        startDate: DateTime(2025, 5, 15),
+        endDate: DateTime(2025, 5, 20),
+        halfDay: false,
+        approvalChain: ['manager-123', 'hr-123'],
+      );
+      
+      final mockEmployee = Employee(
+        id: 'emp-456',
+        name: 'John Doe',
+        email: 'john.doe@example.com',
+        position: 'Software Engineer',
+        departmentId: 'dept-789',
+      );
+      
+      when(() => mockRequestRepository.getRequestById('req-123'))
+        .thenAnswer((_) async => right(mockRequest));
+      
+      when(() => mockRequestRepository.getLeaveRequestById('req-123'))
+        .thenAnswer((_) async => right(mockLeaveRequest));
+      
+      // Mock employee repository
+      final mockEmployeeRepository = MockEmployeeRepository();
+      when(() => mockEmployeeRepository.getEmployeeById('emp-456'))
+        .thenAnswer((_) async => right(mockEmployee));
+      
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            requestRepositoryProvider.overrideWithValue(mockRequestRepository),
+            employeeRepositoryProvider.overrideWithValue(mockEmployeeRepository),
+          ],
+          child: MaterialApp(
+            home: RequestApprovalScreen(requestId: 'req-123'),
+          ),
+        ),
+      );
+      
+      // Allow data to load
+      await tester.pumpAndSettle();
+      
+      // Assert
+      expect(find.text('Leave Request Approval'), findsOneWidget);
+      expect(find.text('John Doe'), findsOneWidget);
+      expect(find.text('Vacation Leave'), findsOneWidget);
+      expect(find.text('May 15, 2025 - May 20, 2025'), findsOneWidget);
+      expect(find.text('Family vacation'), findsOneWidget);
+      
+      // Check approval buttons
+      expect(find.byType(ApproveButton), findsOneWidget);
+      expect(find.byType(RejectButton), findsOneWidget);
+      
+      // Act - tap approve button
+      await tester.tap(find.byType(ApproveButton));
+      await tester.pumpAndSettle();
+      
+      // Verify comments dialog appears
+      expect(find.text('Approval Comments'), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
+      
+      // Add comments and submit
+      await tester.enterText(find.byType(TextField), 'Approved as requested');
+      await tester.tap(find.text('Submit'));
+      await tester.pumpAndSettle();
+      
+      // Verify approval was called
+      verify(() => mockRequestRepository.approveRequest(
+        requestId: 'req-123',
+        reviewerId: any(named: 'reviewerId'),
+        comments: 'Approved as requested',
+        reviewDate: any(named: 'reviewDate'),
+      )).called(1);
+    },
+  );
+  
+  // More tests for rejection flow, escalation, etc.
+}
+```
+
+## Implementation Best Practices
+
+### 1. Request Flow Management
+
+- Implement unidirectional data flow for requests with clear state transitions
+- Keep track of all state changes with appropriate status updates
+- Use optimistic UI updates with proper error handling
+- Cache request data for offline access and quick retrieval
+
+### 2. Approval Chain Implementation
+
+- Store approval chains in a separate entity to support dynamic changes
+- Implement fallback approvers for when primary approvers are unavailable
+- Create notification triggers for pending approvals
+- Support bulk approvals for managers with multiple pending requests
+
+### 3. Leave Balance Calculations
+
+- Handle fractional leave days (half-days) properly
+- Account for weekends and holidays in duration calculations
+- Implement clear rules for leave accrual and expiration
+- Audit all balance changes with timestamps and approver information
+
+### 4. Performance Considerations
+
+- Optimize team calendar queries for performance
+- Implement pagination for request history
+- Use caching for frequently accessed data like leave balances
+- Efficiently handle date range queries for reporting
+
+### 5. Offline Support
+
+- Ensure all time management features work offline
+- Implement proper conflict resolution for concurrent edits
+- Prioritize request submissions in the sync queue
+
+- Provide clear indicators for pending sync status

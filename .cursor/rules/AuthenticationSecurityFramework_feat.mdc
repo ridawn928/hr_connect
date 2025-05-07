@@ -1,0 +1,1353 @@
+---
+description: 
+globs: **/auth_*.dart,**/security_*.dart,**/jwt_*.dart,**/authentication_*.dart,**/features/auth/**/*.dart,**/features/security/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's Authentication and Security Framework
+globs: **/auth_*.dart,**/security_*.dart,**/jwt_*.dart,**/authentication_*.dart,**/features/auth/**/*.dart,**/features/security/**/*.dart
+alwaysApply: false
+---
+
+# Authentication and Security Framework
+
+This rule provides implementation guidance for the Authentication and Security Framework of HR Connect - a Flutter-based workforce management solution with comprehensive security requirements.
+
+## Feature Overview
+
+The Authentication and Security Framework enables:
+- JWT-based authentication with refresh mechanism
+- Role-based access control (Employee, Branch Manager, Payroll Portal, HR Portal)
+- Extended offline access with 7-day (168-hour) limit
+- Multi-factor authentication for admin accounts
+- Device integrity checking and tamper detection
+- Certificate pinning for network requests
+- Audit trails for critical HR actions
+- Maximum of 2 devices per employee
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Authentication
+  dart_jsonwebtoken: ^3.2.0   # JWT token handling
+  local_auth: ^2.1.6          # Biometric authentication
+  firebase_auth: ^5.5.2       # Optional Firebase integration
+  
+  # Security
+  flutter_secure_storage: ^9.2.4  # Secure storage for tokens & keys
+  encrypt: ^5.0.1               # Field-level encryption
+  dio: ^5.3.3                   # HTTP client with certificate pinning
+  
+  # State Management
+  riverpod: ^2.6.1            # Core state management
+  flutter_riverpod: ^2.6.1    # Flutter integration for Riverpod
+  
+  # Utils
+  dartz: ^0.10.1              # Functional error handling
+  uuid: ^3.0.7                # Unique identifiers
+  logger: ^2.0.2+1            # Security logging
+```
+
+## Domain Models
+
+### Authentication Models
+
+```dart
+/// Authentication token model with refresh capabilities
+@freezed
+class AuthTokens with _$AuthTokens {
+  const factory AuthTokens({
+    required String accessToken,
+    required String refreshToken,
+    required DateTime accessTokenExpiry,
+    required DateTime refreshTokenExpiry,
+  }) = _AuthTokens;
+  
+  factory AuthTokens.fromJson(Map<String, dynamic> json) => 
+      _$AuthTokensFromJson(json);
+      
+  /// Check if access token is expired
+  bool get isAccessTokenExpired => 
+      DateTime.now().isAfter(accessTokenExpiry);
+      
+  /// Check if refresh token is expired
+  bool get isRefreshTokenExpired => 
+      DateTime.now().isAfter(refreshTokenExpiry);
+      
+  /// Check if tokens need to be refreshed
+  bool get needsRefresh => 
+      isAccessTokenExpired && !isRefreshTokenExpired;
+      
+  /// Check if both tokens are expired (full re-login required)
+  bool get isFullyExpired => 
+      isAccessTokenExpired && isRefreshTokenExpired;
+}
+
+/// User authentication profile
+@freezed
+class AuthenticationProfile with _$AuthenticationProfile {
+  const factory AuthenticationProfile({
+    required String id,
+    required String employeeId,
+    required String email,
+    required UserRole role,
+    required bool mfaEnabled,
+    required List<DeviceInfo> authorizedDevices,
+    required AuthStatus status,
+    required DateTime lastLogin,
+    DateTime? passwordLastChanged,
+    DateTime? mfaLastVerified,
+    int? failedLoginAttempts,
+    DateTime? lockedUntil,
+    required SyncStatus syncStatus,
+  }) = _AuthenticationProfile;
+  
+  factory AuthenticationProfile.fromJson(Map<String, dynamic> json) => 
+      _$AuthenticationProfileFromJson(json);
+}
+
+enum UserRole {
+  employee,          // Base role
+  branchManager,     // Team management capabilities
+  payrollPortal,     // Payroll admin
+  hrPortal,          // System admin
+}
+
+enum AuthStatus {
+  active,
+  locked,
+  passwordExpired,
+  mfaRequired,
+  inactive,
+}
+
+/// Device information for multi-device support
+@freezed
+class DeviceInfo with _$DeviceInfo {
+  const factory DeviceInfo({
+    required String deviceId,
+    required String deviceName,
+    required String platform,
+    required DateTime registeredAt,
+    DateTime? lastUsed,
+    required bool isCurrentDevice,
+  }) = _DeviceInfo;
+  
+  factory DeviceInfo.fromJson(Map<String, dynamic> json) => 
+      _$DeviceInfoFromJson(json);
+}
+```
+
+### Permission Models
+
+```dart
+/// Permission model for role-based access control
+@freezed
+class Permission with _$Permission {
+  const factory Permission({
+    required String resource,
+    required PermissionAction action,
+    required List<UserRole> allowedRoles,
+    List<String>? permissionOverrides,
+  }) = _Permission;
+  
+  factory Permission.fromJson(Map<String, dynamic> json) => 
+      _$PermissionFromJson(json);
+}
+
+enum PermissionAction {
+  view,
+  create,
+  update,
+  delete,
+  approve,
+  export,
+  all,
+}
+
+/// Audit log entry
+@freezed
+class AuditLogEntry with _$AuditLogEntry {
+  const factory AuditLogEntry({
+    required String id,
+    required String userId,
+    required String action,
+    required DateTime timestamp,
+    String? targetId,
+    String? targetType,
+    String? details,
+    Map<String, dynamic>? metadata,
+    String? ipAddress,
+    String? deviceId,
+  }) = _AuditLogEntry;
+  
+  factory AuditLogEntry.fromJson(Map<String, dynamic> json) => 
+      _$AuditLogEntryFromJson(json);
+}
+```
+
+## Core Use Cases
+
+### Authentication Flow
+
+```dart
+@riverpod
+class AuthController extends _$AuthController {
+  late final AuthRepository _authRepository;
+  late final SecureStorageService _secureStorage;
+  
+  @override
+  FutureOr<AuthState> build() {
+    _authRepository = ref.read(authRepositoryProvider);
+    _secureStorage = ref.read(secureStorageServiceProvider);
+    
+    _checkExistingAuth();
+    
+    return const AuthState.initial();
+  }
+  
+  /// Log in with email and password
+  Future<void> login({
+    required String email,
+    required String password,
+  }) async {
+    state = const AuthState.loading();
+    
+    try {
+      final result = await _authRepository.login(email, password);
+      
+      await result.fold(
+        (failure) async {
+          if (failure is InvalidCredentialsFailure) {
+            state = const AuthState.failure(
+              AuthFailureReason.invalidCredentials,
+            );
+          } else if (failure is AccountLockedFailure) {
+            state = AuthState.failure(
+              AuthFailureReason.accountLocked,
+              retryAfter: failure.lockedUntil,
+            );
+          } else if (failure is MfaRequiredFailure) {
+            // Store email for MFA step
+            await _secureStorage.write(
+              key: 'temp_auth_email',
+              value: email,
+            );
+            
+            state = AuthState.mfaRequired(
+              mfaToken: failure.mfaToken,
+            );
+          } else {
+            state = const AuthState.failure(
+              AuthFailureReason.unknown,
+            );
+          }
+        },
+        (authResult) async {
+          // Save tokens securely
+          await _saveTokens(authResult.tokens);
+          
+          // Update last login date
+          await _authRepository.updateLastLogin(authResult.userId);
+          
+          // Check device limit
+          final deviceCount = authResult.profile.authorizedDevices.length;
+          if (deviceCount >= 2) {
+            // Only allow login on previously registered devices
+            final deviceId = await _getDeviceId();
+            final isAuthorizedDevice = authResult.profile.authorizedDevices
+                .any((device) => device.deviceId == deviceId);
+            
+            if (!isAuthorizedDevice) {
+              state = const AuthState.failure(
+                AuthFailureReason.deviceLimitReached,
+              );
+              return;
+            }
+          } else {
+            // Register this device
+            final deviceInfo = await _getDeviceInfo();
+            await _authRepository.registerDevice(
+              authResult.userId,
+              deviceInfo,
+            );
+          }
+          
+          // Start offline timer when login is successful
+          await _resetOfflineTimer();
+          
+          state = AuthState.authenticated(
+            userId: authResult.userId,
+            profile: authResult.profile,
+          );
+        },
+      );
+    } catch (e) {
+      state = AuthState.failure(
+        AuthFailureReason.unknown,
+        message: e.toString(),
+      );
+    }
+  }
+  
+  /// Verify MFA token
+  Future<void> verifyMfa(String mfaCode, String mfaToken) async {
+    state = const AuthState.loading();
+    
+    try {
+      final email = await _secureStorage.read(key: 'temp_auth_email');
+      
+      if (email == null) {
+        state = const AuthState.failure(
+          AuthFailureReason.sessionExpired,
+        );
+        return;
+      }
+      
+      final result = await _authRepository.verifyMfa(
+        email: email,
+        mfaCode: mfaCode,
+        mfaToken: mfaToken,
+      );
+      
+      result.fold(
+        (failure) {
+          if (failure is InvalidMfaCodeFailure) {
+            state = AuthState.mfaRequired(
+              mfaToken: mfaToken,
+              error: 'Invalid verification code',
+            );
+          } else {
+            state = const AuthState.failure(
+              AuthFailureReason.unknown,
+            );
+          }
+        },
+        (authResult) async {
+          // Save tokens securely
+          await _saveTokens(authResult.tokens);
+          
+          // Update last login and MFA verification date
+          await _authRepository.updateLastLogin(authResult.userId);
+          await _authRepository.updateMfaVerified(authResult.userId);
+          
+          // Register this device if needed
+          if (!_isDeviceRegistered(authResult.profile)) {
+            final deviceInfo = await _getDeviceInfo();
+            await _authRepository.registerDevice(
+              authResult.userId,
+              deviceInfo,
+            );
+          }
+          
+          // Start offline timer
+          await _resetOfflineTimer();
+          
+          state = AuthState.authenticated(
+            userId: authResult.userId,
+            profile: authResult.profile,
+          );
+        },
+      );
+    } catch (e) {
+      state = AuthState.failure(
+        AuthFailureReason.unknown,
+        message: e.toString(),
+      );
+    }
+  }
+  
+  /// Refresh authentication tokens
+  Future<bool> refreshTokens() async {
+    try {
+      final refreshToken = await _secureStorage.read(key: 'refresh_token');
+      
+      if (refreshToken == null) {
+        state = const AuthState.unauthenticated();
+        return false;
+      }
+      
+      final result = await _authRepository.refreshToken(refreshToken);
+      
+      return result.fold(
+        (failure) async {
+          // If refresh fails, clear tokens and require re-login
+          await _clearTokens();
+          state = const AuthState.unauthenticated();
+          return false;
+        },
+        (tokens) async {
+          // Save new tokens
+          await _saveTokens(tokens);
+          return true;
+        },
+      );
+    } catch (e) {
+      await _clearTokens();
+      state = const AuthState.unauthenticated();
+      return false;
+    }
+  }
+  
+  /// Logout user
+  Future<void> logout() async {
+    try {
+      final userId = state.maybeWhen(
+        authenticated: (userId, _) => userId,
+        orElse: () => null,
+      );
+      
+      if (userId != null) {
+        final refreshToken = await _secureStorage.read(key: 'refresh_token');
+        if (refreshToken != null) {
+          // Attempt to invalidate token on server
+          await _authRepository.logout(refreshToken);
+        }
+      }
+    } finally {
+      // Always clear local auth data
+      await _clearTokens();
+      state = const AuthState.unauthenticated();
+    }
+  }
+  
+  /// Check if tokens have been saved from a previous session
+  Future<void> _checkExistingAuth() async {
+    final accessToken = await _secureStorage.read(key: 'access_token');
+    final refreshToken = await _secureStorage.read(key: 'refresh_token');
+    
+    if (accessToken == null || refreshToken == null) {
+      state = const AuthState.unauthenticated();
+      return;
+    }
+    
+    // Check offline time limit
+    final offlineStartStr = await _secureStorage.read(key: 'offline_start_time');
+    if (offlineStartStr != null) {
+      final offlineStart = DateTime.parse(offlineStartStr);
+      final offlineLimit = const Duration(days: 7); // 168 hours
+      final offlineTime = DateTime.now().difference(offlineStart);
+      
+      if (offlineTime > offlineLimit) {
+        // Offline limit exceeded, force re-login
+        await _clearTokens();
+        state = const AuthState.offlineLimitExceeded();
+        return;
+      }
+    }
+    
+    try {
+      // Try to get user profile
+      final userId = JwtDecoder.decode(accessToken)['sub'] as String?;
+      
+      if (userId == null) {
+        await _clearTokens();
+        state = const AuthState.unauthenticated();
+        return;
+      }
+      
+      final profileResult = await _authRepository.getUserProfile(userId);
+      
+      profileResult.fold(
+        (failure) async {
+          final refreshResult = await refreshTokens();
+          if (!refreshResult) {
+            state = const AuthState.unauthenticated();
+          }
+        },
+        (profile) {
+          state = AuthState.authenticated(
+            userId: userId,
+            profile: profile,
+          );
+        },
+      );
+    } catch (e) {
+      final refreshResult = await refreshTokens();
+      if (!refreshResult) {
+        state = const AuthState.unauthenticated();
+      }
+    }
+  }
+  
+  /// Save authentication tokens securely
+  Future<void> _saveTokens(AuthTokens tokens) async {
+    await _secureStorage.write(key: 'access_token', value: tokens.accessToken);
+    await _secureStorage.write(key: 'refresh_token', value: tokens.refreshToken);
+    await _secureStorage.write(
+      key: 'token_expiry',
+      value: tokens.accessTokenExpiry.toIso8601String(),
+    );
+    await _secureStorage.write(
+      key: 'refresh_expiry',
+      value: tokens.refreshTokenExpiry.toIso8601String(),
+    );
+  }
+  
+  /// Clear all authentication tokens
+  Future<void> _clearTokens() async {
+    await _secureStorage.delete(key: 'access_token');
+    await _secureStorage.delete(key: 'refresh_token');
+    await _secureStorage.delete(key: 'token_expiry');
+    await _secureStorage.delete(key: 'refresh_expiry');
+    await _secureStorage.delete(key: 'temp_auth_email');
+  }
+  
+  /// Reset offline timer when authentication succeeds
+  Future<void> _resetOfflineTimer() async {
+    await _secureStorage.write(
+      key: 'offline_start_time',
+      value: DateTime.now().toIso8601String(),
+    );
+  }
+  
+  /// Get current device ID for device management
+  Future<String> _getDeviceId() async {
+    // Implementation to get unique device ID
+    // ...
+    return 'device-id-123'; // Placeholder
+  }
+  
+  /// Get complete device info for registration
+  Future<DeviceInfo> _getDeviceInfo() async {
+    // Implementation to get device details
+    // ...
+    return DeviceInfo(
+      deviceId: 'device-id-123',
+      deviceName: 'Test Device',
+      platform: 'iOS',
+      registeredAt: DateTime.now(),
+      isCurrentDevice: true,
+    );
+  }
+  
+  /// Check if current device is already registered
+  bool _isDeviceRegistered(AuthenticationProfile profile) {
+    // Implementation to check if device is in authorized list
+    // ...
+    return false; // Placeholder
+  }
+}
+```
+
+### Permission Verification
+
+```dart
+class PermissionService {
+  final List<Permission> _permissions;
+  
+  PermissionService(this._permissions);
+  
+  /// Check if user has permission to perform action on resource
+  bool hasPermission(UserRole userRole, String resource, PermissionAction action, {
+    List<String>? userOverrides,
+  }) {
+    // HR Portal users have full system access
+    if (userRole == UserRole.hrPortal) {
+      return true;
+    }
+    
+    // Find specific permission
+    final permission = _permissions.firstWhere(
+      (p) => p.resource == resource && (p.action == action || p.action == PermissionAction.all),
+      orElse: () => Permission(
+        resource: resource,
+        action: action,
+        allowedRoles: [],
+      ),
+    );
+    
+    // Check role-based permission
+    final hasRolePermission = permission.allowedRoles.contains(userRole);
+    
+    // Check user-specific overrides
+    final hasOverride = userOverrides != null && 
+        permission.permissionOverrides != null &&
+        userOverrides.any((id) => permission.permissionOverrides!.contains(id));
+    
+    return hasRolePermission || hasOverride;
+  }
+  
+  /// Get all resources user has access to
+  List<String> getUserAccessibleResources(UserRole userRole, {
+    List<String>? userOverrides,
+    PermissionAction? action,
+  }) {
+    if (userRole == UserRole.hrPortal) {
+      // HR Portal has access to all resources
+      return _permissions
+          .map((p) => p.resource)
+          .toSet()
+          .toList();
+    }
+    
+    return _permissions
+        .where((p) => 
+            (action == null || p.action == action || p.action == PermissionAction.all) &&
+            (p.allowedRoles.contains(userRole) || 
+                (userOverrides != null &&
+                 p.permissionOverrides != null &&
+                 userOverrides.any((id) => p.permissionOverrides!.contains(id))))
+        )
+        .map((p) => p.resource)
+        .toSet() // Remove duplicates
+        .toList();
+  }
+}
+```
+
+## UI Implementation
+
+### Login Screen
+
+```dart
+class LoginScreen extends ConsumerStatefulWidget {
+  const LoginScreen({Key? key}) : super(key: key);
+  
+  @override
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends ConsumerState<LoginScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
+  bool _obscurePassword = true;
+  bool _rememberMe = false;
+  
+  @override
+  void dispose() {
+    _emailController.dispose();
+    _passwordController.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    final authState = ref.watch(authControllerProvider);
+    final isLoading = authState is AuthStateLoading;
+    
+    ref.listen<AuthState>(authControllerProvider, (previous, current) {
+      current.maybeWhen(
+        authenticated: (_, __) {
+          // Navigate to home screen
+          Navigator.of(context).pushReplacementNamed('/home');
+        },
+        mfaRequired: (mfaToken, error) {
+          // Navigate to MFA verification screen
+          Navigator.of(context).pushNamed(
+            '/mfa-verification',
+            arguments: MfaVerificationArgs(mfaToken: mfaToken),
+          );
+        },
+        failure: (reason, message, retryAfter) {
+          // Show error message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(message ?? _getErrorMessage(reason)),
+              backgroundColor: Theme.of(context).colorScheme.error,
+            ),
+          );
+        },
+        offlineLimitExceeded: () {
+          // Show offline limit message
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Offline access limit reached. Please connect to the internet to continue.'),
+              backgroundColor: Colors.orange,
+            ),
+          );
+        },
+        orElse: () {},
+      );
+    });
+    
+    return Scaffold(
+      body: SafeArea(
+        child: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24.0),
+            child: Form(
+              key: _formKey,
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const SizedBox(height: 24),
+                  Image.asset(
+                    'assets/images/logo.png',
+                    height: 80,
+                  ),
+                  const SizedBox(height: 48),
+                  Text(
+                    'Log In to HR Connect',
+                    style: Theme.of(context).textTheme.headlineMedium,
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 48),
+                  TextFormField(
+                    controller: _emailController,
+                    decoration: const InputDecoration(
+                      labelText: 'Email',
+                      hintText: 'Enter your email',
+                      prefixIcon: Icon(Icons.email),
+                      border: OutlineInputBorder(),
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your email';
+                      }
+                      if (!value.contains('@')) {
+                        return 'Please enter a valid email';
+                      }
+                      return null;
+                    },
+                    enabled: !isLoading,
+                  ),
+                  const SizedBox(height: 24),
+                  TextFormField(
+                    controller: _passwordController,
+                    decoration: InputDecoration(
+                      labelText: 'Password',
+                      hintText: 'Enter your password',
+                      prefixIcon: const Icon(Icons.lock),
+                      suffixIcon: IconButton(
+                        icon: Icon(
+                          _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                        ),
+                        onPressed: () {
+                          setState(() {
+                            _obscurePassword = !_obscurePassword;
+                          });
+                        },
+                      ),
+                      border: const OutlineInputBorder(),
+                    ),
+                    obscureText: _obscurePassword,
+                    validator: (value) {
+                      if (value == null || value.isEmpty) {
+                        return 'Please enter your password';
+                      }
+                      return null;
+                    },
+                    enabled: !isLoading,
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: [
+                      Checkbox(
+                        value: _rememberMe,
+                        onChanged: isLoading 
+                            ? null 
+                            : (value) {
+                                setState(() {
+                                  _rememberMe = value ?? false;
+                                });
+                              },
+                      ),
+                      const Text('Remember me'),
+                      const Spacer(),
+                      TextButton(
+                        onPressed: isLoading 
+                            ? null 
+                            : () {
+                                Navigator.of(context).pushNamed('/forgot-password');
+                              },
+                        child: const Text('Forgot Password?'),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 32),
+                  ElevatedButton(
+                    onPressed: isLoading 
+                        ? null 
+                        : _handleLogin,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.all(16),
+                    ),
+                    child: isLoading
+                        ? const CircularProgressIndicator()
+                        : const Text('Log In'),
+                  ),
+                  const SizedBox(height: 24),
+                  _buildOfflineIndicator(),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+  
+  void _handleLogin() {
+    if (_formKey.currentState?.validate() ?? false) {
+      // Attempt login
+      ref.read(authControllerProvider.notifier).login(
+        email: _emailController.text.trim(),
+        password: _passwordController.text,
+      );
+    }
+  }
+  
+  Widget _buildOfflineIndicator() {
+    final connectivityStatus = ref.watch(connectivityProvider);
+    
+    if (connectivityStatus == ConnectivityStatus.offline) {
+      return Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade100,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.cloud_off,
+              color: Colors.orange.shade800,
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Text(
+                'You are currently offline. Login will use cached credentials.',
+                style: TextStyle(
+                  color: Colors.orange.shade800,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    
+    return const SizedBox.shrink();
+  }
+  
+  String _getErrorMessage(AuthFailureReason reason) {
+    switch (reason) {
+      case AuthFailureReason.invalidCredentials:
+        return 'Invalid email or password';
+      case AuthFailureReason.accountLocked:
+        return 'Your account has been locked due to too many failed attempts';
+      case AuthFailureReason.deviceLimitReached:
+        return 'You have reached the maximum number of devices (2)';
+      case AuthFailureReason.networkError:
+        return 'Network error. Please check your connection';
+      case AuthFailureReason.serverError:
+        return 'Server error. Please try again later';
+      case AuthFailureReason.sessionExpired:
+        return 'Your session has expired. Please log in again';
+      default:
+        return 'An unknown error occurred';
+    }
+  }
+}
+```
+
+## Business Rules
+
+### 1. Authentication Rules
+
+- **JWT Token Management**:
+  - Access token validity: 1 hour
+  - Refresh token validity: 7 days (configurable)
+  - Silent refresh happens when access token expires but refresh token is valid
+  - Full re-login required when both tokens expire
+  - Tokens stored securely using flutter_secure_storage
+
+- **Login Flow**:
+  - Login requires email and password validation
+  - Multi-factor authentication required for admin roles (Payroll Portal, HR Portal)
+  - MFA is optional but recommended for Branch Managers
+  - MFA verification valid for 12 hours for the same device
+
+- **Password Policies**:
+  - Minimum 8 characters
+  - Must include at least one uppercase letter, one lowercase letter, one number
+  - Password expiration: 90 days (configurable)
+  - Password history: Cannot reuse last 5 passwords
+  - Maximum 5 failed login attempts before temporary account lock
+
+### 2. Offline Authentication
+
+- **7-Day Limit**:
+  - Offline authentication allowed for up to 7 days (168 hours)
+  - Timer starts on last successful online authentication
+  - Warning notifications at 5 days, 6 days, and 6.5 days
+  - Forced re-login required after 7 days
+  - Timer resets when online authentication succeeds
+
+- **Offline Security**:
+  - Biometric or PIN verification required after 4 hours of inactivity
+  - Reduced functionality in offline mode for administrative features
+  - Critical operations require online verification
+  - Tokens and credentials encrypted in storage
+
+### 3. Device Management
+
+- **Device Limit**:
+  - Maximum 2 registered devices per employee
+  - Newest device replaces oldest if limit is exceeded
+  - Device registration requires online authentication
+  - Each device has a unique identifier for tracking
+
+- **Device Verification**:
+  - New device registrations trigger email notifications
+  - Unrecognized device login requires MFA verification
+  - Tamper detection monitors for rooted/jailbroken devices
+  - Device information recorded with each login
+
+### 4. Role-Based Access Control
+
+- **User Roles Hierarchy**:
+  - Employee (base role with limited permissions)
+  - Branch Manager (all Employee permissions plus team management)
+  - Payroll Portal (specialized administrative permissions)
+  - HR Portal (highest access level with system-wide permissions)
+
+- **Permission Rules**:
+  - Resources and actions defined in permission matrix
+  - HR Portal role can override any permission
+  - Permission checks performed at UI, API, and data layers
+  - User-specific overrides possible for special cases
+
+### 5. Security Auditing
+
+- **Audit Trail Requirements**:
+  - All authentication events must be logged
+  - All permission-protected operations must be audited
+  - Audit logs include user, timestamp, action, and details
+  - Device information included in audit records
+
+- **Critical Operations**:
+  - Role assignments
+  - Permission changes
+  - Device authorizations
+  - Payroll processing
+  - System configuration changes
+
+## Repositories
+
+### Authentication Repository
+
+```dart
+abstract class AuthRepository {
+  /// Authenticate user with email and password
+  Future<Either<AuthFailure, AuthResult>> login(
+    String email,
+    String password,
+  );
+  
+  /// Verify MFA code during login
+  Future<Either<AuthFailure, AuthResult>> verifyMfa({
+    required String email,
+    required String mfaCode,
+    required String mfaToken,
+  });
+  
+  /// Get user profile information
+  Future<Either<AuthFailure, AuthenticationProfile>> getUserProfile(
+    String userId,
+  );
+  
+  /// Refresh authentication token
+  Future<Either<AuthFailure, AuthTokens>> refreshToken(
+    String refreshToken,
+  );
+  
+  /// Logout and invalidate tokens
+  Future<Either<AuthFailure, Unit>> logout(String refreshToken);
+  
+  /// Register a new device for the user
+  Future<Either<AuthFailure, Unit>> registerDevice(
+    String userId,
+    DeviceInfo deviceInfo,
+  );
+  
+  /// Remove a device from user's authorized devices
+  Future<Either<AuthFailure, Unit>> removeDevice(
+    String userId,
+    String deviceId,
+  );
+  
+  /// Update last login timestamp
+  Future<Either<AuthFailure, Unit>> updateLastLogin(String userId);
+  
+  /// Update last MFA verification timestamp
+  Future<Either<AuthFailure, Unit>> updateMfaVerified(String userId);
+  
+  /// Check if user's password needs to be changed
+  Future<Either<AuthFailure, bool>> isPasswordChangeRequired(String userId);
+}
+```
+
+### Permission Repository
+
+```dart
+abstract class PermissionRepository {
+  /// Get all permissions defined in the system
+  Future<Either<PermissionFailure, List<Permission>>> getAllPermissions();
+  
+  /// Get permissions for a specific resource
+  Future<Either<PermissionFailure, List<Permission>>> getResourcePermissions(
+    String resource,
+  );
+  
+  /// Check if user has permission
+  Future<Either<PermissionFailure, bool>> hasPermission({
+    required String userId,
+    required String resource,
+    required PermissionAction action,
+  });
+  
+  /// Get all resources user has access to
+  Future<Either<PermissionFailure, List<String>>> getUserAccessibleResources({
+    required String userId,
+    PermissionAction? action,
+  });
+  
+  /// Grant user-specific permission override
+  Future<Either<PermissionFailure, Unit>> grantPermissionOverride({
+    required String userId,
+    required String resource,
+    required PermissionAction action,
+    required String grantedBy,
+    DateTime? expiresAt,
+  });
+  
+  /// Revoke user-specific permission override
+  Future<Either<PermissionFailure, Unit>> revokePermissionOverride({
+    required String userId,
+    required String resource,
+    required PermissionAction action,
+    required String revokedBy,
+  });
+}
+```
+
+### Audit Repository
+
+```dart
+abstract class AuditRepository {
+  /// Log an audit event
+  Future<Either<AuditFailure, Unit>> logAuditEvent({
+    required String userId,
+    required String action,
+    String? targetId,
+    String? targetType,
+    String? details,
+    Map<String, dynamic>? metadata,
+  });
+  
+  /// Get audit logs with filtering
+  Future<Either<AuditFailure, List<AuditLogEntry>>> getAuditLogs({
+    String? userId,
+    String? action,
+    DateTimeRange? dateRange,
+    int? limit,
+    int? offset,
+  });
+  
+  /// Get recent actions for a user
+  Future<Either<AuditFailure, List<AuditLogEntry>>> getUserRecentActions(
+    String userId, {
+    int limit = 10,
+  });
+  
+  /// Export audit logs to file
+  Future<Either<AuditFailure, String>> exportAuditLogs({
+    String? userId,
+    String? action,
+    DateTimeRange? dateRange,
+  });
+}
+```
+
+## Testing Guidelines
+
+### 1. Authentication Tests
+
+```dart
+void main() {
+  late MockAuthRepository mockAuthRepository;
+  late MockSecureStorageService mockSecureStorage;
+  late AuthController authController;
+  
+  setUp(() {
+    mockAuthRepository = MockAuthRepository();
+    mockSecureStorage = MockSecureStorageService();
+    
+    // Setup provider container with mocks
+    final container = ProviderContainer(
+      overrides: [
+        authRepositoryProvider.overrideWithValue(mockAuthRepository),
+        secureStorageServiceProvider.overrideWithValue(mockSecureStorage),
+      ],
+    );
+    
+    authController = container.read(authControllerProvider.notifier);
+  });
+  
+  group('Authentication Controller', () {
+    test('should authenticate user with valid credentials', () async {
+      // Arrange
+      const email = 'test@example.com';
+      const password = 'Password123';
+      
+      final authResult = AuthResult(
+        userId: 'user-123',
+        tokens: AuthTokens(
+          accessToken: 'access-token',
+          refreshToken: 'refresh-token',
+          accessTokenExpiry: DateTime.now().add(const Duration(hours: 1)),
+          refreshTokenExpiry: DateTime.now().add(const Duration(days: 7)),
+        ),
+        profile: AuthenticationProfile(
+          id: 'auth-123',
+          employeeId: 'emp-123',
+          email: email,
+          role: UserRole.employee,
+          mfaEnabled: false,
+          authorizedDevices: [],
+          status: AuthStatus.active,
+          lastLogin: DateTime.now(),
+          syncStatus: SyncStatus.synced,
+        ),
+      );
+      
+      // Mock repository response
+      when(() => mockAuthRepository.login(email, password))
+          .thenAnswer((_) async => Right(authResult));
+      
+      when(() => mockAuthRepository.updateLastLogin(any()))
+          .thenAnswer((_) async => const Right(unit));
+      
+      when(() => mockAuthRepository.registerDevice(any(), any()))
+          .thenAnswer((_) async => const Right(unit));
+      
+      // Mock secure storage
+      when(() => mockSecureStorage.write(key: any(named: 'key'), value: any(named: 'value')))
+          .thenAnswer((_) async {});
+      
+      // Act
+      await authController.login(email: email, password: password);
+      
+      // Assert
+      verify(() => mockAuthRepository.login(email, password)).called(1);
+      verify(() => mockSecureStorage.write(key: 'access_token', value: 'access-token')).called(1);
+      verify(() => mockSecureStorage.write(key: 'refresh_token', value: 'refresh-token')).called(1);
+      verify(() => mockAuthRepository.updateLastLogin('user-123')).called(1);
+      
+      // Verify device registration
+      verify(() => mockAuthRepository.registerDevice('user-123', any())).called(1);
+      
+      // Verify state is authenticated
+      expect(
+        authController.state,
+        AuthState.authenticated(
+          userId: 'user-123',
+          profile: authResult.profile,
+        ),
+      );
+    });
+    
+    test('should handle invalid credentials', () async {
+      // Arrange
+      const email = 'test@example.com';
+      const password = 'WrongPassword';
+      
+      // Mock repository response
+      when(() => mockAuthRepository.login(email, password))
+          .thenAnswer((_) async => const Left(InvalidCredentialsFailure()));
+      
+      // Act
+      await authController.login(email: email, password: password);
+      
+      // Assert
+      verify(() => mockAuthRepository.login(email, password)).called(1);
+      
+      // Verify state is failure
+      expect(
+        authController.state,
+        const AuthState.failure(AuthFailureReason.invalidCredentials),
+      );
+    });
+    
+    test('should handle MFA required', () async {
+      // Arrange
+      const email = 'test@example.com';
+      const password = 'Password123';
+      const mfaToken = 'mfa-token-123';
+      
+      // Mock repository response
+      when(() => mockAuthRepository.login(email, password))
+          .thenAnswer((_) async => const Left(MfaRequiredFailure(mfaToken: mfaToken)));
+      
+      // Mock secure storage
+      when(() => mockSecureStorage.write(key: any(named: 'key'), value: any(named: 'value')))
+          .thenAnswer((_) async {});
+      
+      // Act
+      await authController.login(email: email, password: password);
+      
+      // Assert
+      verify(() => mockAuthRepository.login(email, password)).called(1);
+      verify(() => mockSecureStorage.write(key: 'temp_auth_email', value: email)).called(1);
+      
+      // Verify state is MFA required
+      expect(
+        authController.state,
+        AuthState.mfaRequired(mfaToken: mfaToken),
+      );
+    });
+    
+    // More tests for logout, token refresh, etc.
+  });
+}
+```
+
+### 2. Permission Tests
+
+```dart
+void main() {
+  late PermissionService permissionService;
+  
+  group('PermissionService', () {
+    setUp(() {
+      // Setup test permissions
+      final permissions = [
+        Permission(
+          resource: 'employee:profile',
+          action: PermissionAction.view,
+          allowedRoles: [UserRole.employee, UserRole.branchManager],
+        ),
+        Permission(
+          resource: 'employee:profile',
+          action: PermissionAction.update,
+          allowedRoles: [UserRole.branchManager],
+          permissionOverrides: ['user-123', 'user-456'],
+        ),
+        Permission(
+          resource: 'payroll:process',
+          action: PermissionAction.all,
+          allowedRoles: [UserRole.payrollPortal],
+        ),
+      ];
+      
+      permissionService = PermissionService(permissions);
+    });
+    
+    test('should grant view permission to employee for own profile', () {
+      // Arrange & Act
+      final hasPermission = permissionService.hasPermission(
+        UserRole.employee,
+        'employee:profile',
+        PermissionAction.view,
+      );
+      
+      // Assert
+      expect(hasPermission, true);
+    });
+    
+    test('should deny update permission to employee for profile', () {
+      // Arrange & Act
+      final hasPermission = permissionService.hasPermission(
+        UserRole.employee,
+        'employee:profile',
+        PermissionAction.update,
+      );
+      
+      // Assert
+      expect(hasPermission, false);
+    });
+    
+    test('should grant update permission to user with override', () {
+      // Arrange & Act
+      final hasPermission = permissionService.hasPermission(
+        UserRole.employee,
+        'employee:profile',
+        PermissionAction.update,
+        userOverrides: ['user-123'],
+      );
+      
+      // Assert
+      expect(hasPermission, true);
+    });
+    
+    test('should grant all permissions to HR Portal role', () {
+      // Arrange & Act
+      final hasProfileView = permissionService.hasPermission(
+        UserRole.hrPortal,
+        'employee:profile',
+        PermissionAction.view,
+      );
+      
+      final hasProfileUpdate = permissionService.hasPermission(
+        UserRole.hrPortal,
+        'employee:profile',
+        PermissionAction.update,
+      );
+      
+      final hasPayrollProcess = permissionService.hasPermission(
+        UserRole.hrPortal,
+        'payroll:process',
+        PermissionAction.all,
+      );
+      
+      // Assert
+      expect(hasProfileView, true);
+      expect(hasProfileUpdate, true);
+      expect(hasPayrollProcess, true);
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+### 1. Security First
+
+- Always store sensitive data using flutter_secure_storage
+- Implement certificate pinning for API communications
+- Never expose tokens or sensitive data in logs
+- Use encryption for any sensitive data stored locally
+- Sanitize all user inputs to prevent injection attacks
+- Never persist passwords, even in encrypted form
+
+### 2. Token Management
+
+- Implement automated token refresh when access token expires
+- Use interceptors to attach tokens to API requests
+- Handle token expiration gracefully in the UI
+- Log out user when refresh token expires
+- Store tokens securely using platform-specific secure storage
+- Include token rotation strategy
+
+### 3. Error Handling
+
+- Provide user-friendly error messages for authentication failures
+- Implement proper recovery mechanisms for network errors
+- Handle offline scenarios gracefully
+- Use the Either type pattern for clear success/failure paths
+- Always include audit logging for security-related errors
+
+### 4. Testing
+
+- Test all authentication flows thoroughly
+- Implement automated security testing
+- Create tests for permission verification logic
+- Test offline authentication scenarios
+- Validate token refresh and expiration handling
+- Test multi-device support and limitations
+
+### 5. User Experience
+
+- Implement biometric authentication where available
+- Provide clear feedback during authentication processes
+- Add graceful degradation for offline features
+- Show appropriate warnings before offline limit expiration
+- Make security features unobtrusive but effective
+
+- Balance security with usability in multi-factor authentication

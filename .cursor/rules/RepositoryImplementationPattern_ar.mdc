@@ -1,0 +1,501 @@
+---
+description: Enforces consistent repository implementation patterns for HR Connect's offline-first architecture, ensuring proper data access abstraction, error handling, and synchronization.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces consistent repository implementation patterns for HR Connect's offline-first architecture, ensuring proper data access abstraction, error handling, and synchronization.
+globs: **/repository/**/*.dart,**/repositories/**/*.dart,**/data/repositories/**/*.dart
+alwaysApply: false
+---
+
+# Repository Implementation Pattern
+
+This rule provides guidance for implementing repositories in the HR Connect application following an offline-first approach with proper error handling, local caching, and synchronization.
+
+## Overview
+
+HR Connect uses the Repository pattern to abstract data access logic from the rest of the application. Repositories in HR Connect:
+- Follow an offline-first approach with local caching
+- Use Either type from dartz for error handling
+- Support synchronization between local and remote data sources
+- Are organized by aggregates (Employee, AttendanceProfile, etc.)
+
+## Required Packages
+
+```yaml
+dependencies:
+  dartz: ^0.10.1           # For Either type and functional error handling
+  flutter_data: ^2.16.0    # Offline-first data framework with sync capabilities
+  drift: ^2.26.1           # Type-safe SQLite database access
+  connectivity_plus: ^5.0.2 # Network state monitoring
+  internet_connection_checker: ^1.0.0+1 # Validates actual connectivity
+  
+dev_dependencies:
+  mockito: ^5.4.4          # For mocking in repository tests
+  mocktail: ^1.0.1         # Simplified mocking for repository tests
+```
+
+## Repository Pattern Architecture
+
+### Repository Interface
+
+```dart
+/// Repository interface for the EmploymentProfile aggregate
+abstract class EmploymentProfileRepository {
+  /// Get employment profile by ID with offline-first approach
+  Future<Either<Failure, EmploymentProfile>> getById(String id);
+  
+  /// Save employment profile with offline support
+  Future<Either<Failure, Unit>> save(EmploymentProfile profile);
+  
+  /// Get all employment profiles for a department
+  Future<Either<Failure, List<EmploymentProfile>>> getByDepartment(String departmentId);
+  
+  /// Watch changes to an employment profile
+  Stream<Either<Failure, EmploymentProfile>> watchById(String id);
+  
+  /// Delete employment profile
+  Future<Either<Failure, Unit>> delete(String id);
+}
+```
+
+### Repository Implementation
+
+```dart
+/// Repository implementation with offline-first approach
+class EmploymentProfileRepositoryImpl implements EmploymentProfileRepository {
+  final EmploymentProfileLocalDataSource _localDataSource;
+  final EmploymentProfileRemoteDataSource _remoteDataSource;
+  final NetworkInfo _networkInfo;
+  final SyncQueueRepository _syncQueueRepository;
+
+  EmploymentProfileRepositoryImpl(
+    this._localDataSource,
+    this._remoteDataSource,
+    this._networkInfo,
+    this._syncQueueRepository,
+  );
+
+  @override
+  Future<Either<Failure, EmploymentProfile>> getById(String id) async {
+    try {
+      // Always attempt to get from local cache first (offline-first)
+      final localProfile = await _localDataSource.getById(id);
+      
+      // If online and local data exists, try to refresh from remote
+      if (await _networkInfo.isConnected) {
+        try {
+          final remoteProfile = await _remoteDataSource.getById(id);
+          await _localDataSource.save(remoteProfile);
+          return Right(remoteProfile);
+        } on ServerException {
+          // If server fails but we have local data, return that
+          return Right(localProfile);
+        }
+      }
+      
+      // If offline, return local data
+      return Right(localProfile);
+    } on CacheException {
+      // No local data found
+      
+      // If online, try to get from remote
+      if (await _networkInfo.isConnected) {
+        try {
+          final remoteProfile = await _remoteDataSource.getById(id);
+          await _localDataSource.save(remoteProfile);
+          return Right(remoteProfile);
+        } on ServerException catch (e) {
+          return Left(ServerFailure(e.message));
+        }
+      }
+      
+      // No local data and offline
+      return Left(CacheFailure('No cached data available and device is offline'));
+    }
+  }
+
+  @override
+  Future<Either<Failure, Unit>> save(EmploymentProfile profile) async {
+    try {
+      // Always save locally first
+      await _localDataSource.save(profile);
+      
+      // If online, try to save remotely
+      if (await _networkInfo.isConnected) {
+        try {
+          await _remoteDataSource.save(profile);
+          return const Right(unit);
+        } on ServerException catch (e) {
+          // Add to sync queue for later synchronization
+          await _syncQueueRepository.add(
+            SyncOperation(
+              type: SyncOperationType.save,
+              aggregateType: 'EmploymentProfile',
+              aggregateId: profile.id.value,
+              data: profile.toJson(),
+              timestamp: DateTime.now(),
+              priority: SyncPriority.medium,
+            ),
+          );
+          return const Right(unit); // Return success since local save worked
+        }
+      } else {
+        // Add to sync queue for later synchronization
+        await _syncQueueRepository.add(
+          SyncOperation(
+            type: SyncOperationType.save,
+            aggregateType: 'EmploymentProfile',
+            aggregateId: profile.id.value,
+            data: profile.toJson(),
+            timestamp: DateTime.now(),
+            priority: SyncPriority.medium,
+          ),
+        );
+        return const Right(unit); // Return success since local save worked
+      }
+    } on CacheException catch (e) {
+      return Left(CacheFailure(e.message));
+    }
+  }
+
+  @override
+  Stream<Either<Failure, EmploymentProfile>> watchById(String id) {
+    // Use the local data source to watch for changes
+    return _localDataSource.watchById(id).map((profile) => Right(profile))
+      .handleError((error) {
+        if (error is CacheException) {
+          return Left(CacheFailure(error.message));
+        }
+        return Left(UnexpectedFailure(error.toString()));
+      });
+  }
+  
+  // Other methods follow the same pattern
+}
+```
+
+### Data Sources
+
+```dart
+/// Local data source for EmploymentProfile using Drift
+class EmploymentProfileLocalDataSourceImpl implements EmploymentProfileLocalDataSource {
+  final Database _database;
+  
+  EmploymentProfileLocalDataSourceImpl(this._database);
+  
+  @override
+  Future<EmploymentProfile> getById(String id) async {
+    try {
+      final result = await _database.employmentProfilesDao.getById(id);
+      return result.toDomain();
+    } catch (e) {
+      throw CacheException('Failed to get employment profile from local storage: ${e.toString()}');
+    }
+  }
+  
+  @override
+  Future<void> save(EmploymentProfile profile) async {
+    try {
+      await _database.employmentProfilesDao.upsert(profile.toLocalModel());
+    } catch (e) {
+      throw CacheException('Failed to save employment profile to local storage: ${e.toString()}');
+    }
+  }
+  
+  @override
+  Stream<EmploymentProfile> watchById(String id) {
+    return _database.employmentProfilesDao.watchById(id)
+      .map((model) => model.toDomain());
+  }
+  
+  // Other methods...
+}
+
+/// Remote data source for EmploymentProfile using HTTP client
+class EmploymentProfileRemoteDataSourceImpl implements EmploymentProfileRemoteDataSource {
+  final Dio _client;
+  
+  EmploymentProfileRemoteDataSourceImpl(this._client);
+  
+  @override
+  Future<EmploymentProfile> getById(String id) async {
+    try {
+      final response = await _client.get('/api/employment-profiles/$id');
+      
+      if (response.statusCode == 200) {
+        return EmploymentProfileModel.fromJson(response.data).toDomain();
+      } else {
+        throw ServerException('Failed to get employment profile from server');
+      }
+    } catch (e) {
+      throw ServerException('Server error: ${e.toString()}');
+    }
+  }
+  
+  @override
+  Future<void> save(EmploymentProfile profile) async {
+    try {
+      final model = EmploymentProfileModel.fromDomain(profile);
+      
+      await _client.post(
+        '/api/employment-profiles',
+        data: model.toJson(),
+      );
+    } catch (e) {
+      throw ServerException('Failed to save employment profile to server: ${e.toString()}');
+    }
+  }
+  
+  // Other methods...
+}
+```
+
+## Repository Best Practices
+
+1. **Follow Offline-First Approach**
+   - Always try to access local data first
+   - Queue operations for later sync when offline
+   - Update local cache when online operations succeed
+   - Prioritize user experience with optimistic updates
+
+2. **Use Functional Error Handling**
+   - Return Either<Failure, Data> for all operations
+   - Create specific Failure subclasses for different error types
+   - Don't throw exceptions across repository boundaries
+   - Provide meaningful error messages
+
+3. **Implement Background Synchronization**
+   - Use SyncQueueRepository to track pending operations
+   - Implement conflict detection and resolution
+   - Prioritize sync operations based on business importance
+   - Respect the 7-day offline limit constraint
+
+4. **Support Reactive Programming**
+   - Provide Stream-based methods for watching data changes
+   - Use BehaviorSubject for caching latest values
+   - Handle errors properly in streams
+   - Close streams to prevent memory leaks
+
+5. **Apply Proper Caching Strategies**
+   - Implement time-based cache invalidation
+   - Use multi-level caching when appropriate
+   - Cache related entities for offline access
+   - Implement pagination for large data sets
+
+## Business Rules for Repositories
+
+### Offline Operations
+- All operations must work offline within the 7-day (168-hour) limit
+- Critical operations like attendance check-in must be prioritized for sync
+- Local cache must be the source of truth until conflicts are resolved
+
+### Synchronization Priority
+- AttendanceProfile operations have HIGH sync priority
+- RequestProfile operations (leave, overtime) have MEDIUM sync priority
+- Profile updates have NORMAL sync priority
+- Employee images and documents have LOW sync priority
+
+### Conflict Resolution
+- Server timestamp is authoritative for conflict resolution
+- User must be notified of conflicts that require manual resolution
+- Field-level merging should be attempted before rejecting changes
+- Rejection of changes requires clear user notification
+
+### Data Encryption
+- Sensitive employee data must be encrypted at rest
+- Authentication tokens must be stored securely
+- Field-level encryption required for salary information
+
+## Testing Repositories
+
+```dart
+void main() {
+  late EmploymentProfileRepositoryImpl repository;
+  late MockEmploymentProfileLocalDataSource mockLocalDataSource;
+  late MockEmploymentProfileRemoteDataSource mockRemoteDataSource;
+  late MockNetworkInfo mockNetworkInfo;
+  late MockSyncQueueRepository mockSyncQueueRepository;
+
+  setUp(() {
+    mockLocalDataSource = MockEmploymentProfileLocalDataSource();
+    mockRemoteDataSource = MockEmploymentProfileRemoteDataSource();
+    mockNetworkInfo = MockNetworkInfo();
+    mockSyncQueueRepository = MockSyncQueueRepository();
+    repository = EmploymentProfileRepositoryImpl(
+      mockLocalDataSource,
+      mockRemoteDataSource,
+      mockNetworkInfo,
+      mockSyncQueueRepository,
+    );
+  });
+
+  group('getById', () {
+    final tId = 'test-id';
+    final tEmploymentProfile = EmploymentProfile(
+      id: EmploymentProfileId(tId),
+      employeeId: EmployeeId('employee-1'),
+      position: 'Software Engineer',
+      department: 'Engineering',
+      startDate: DateTime(2023, 1, 15),
+      status: EmploymentStatus.active,
+    );
+
+    test('should return cached data when cache is available', () async {
+      // arrange
+      when(mockLocalDataSource.getById(any))
+          .thenAnswer((_) async => tEmploymentProfile);
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => false);
+
+      // act
+      final result = await repository.getById(tId);
+
+      // assert
+      verify(mockLocalDataSource.getById(tId));
+      verifyZeroInteractions(mockRemoteDataSource);
+      expect(result, equals(Right(tEmploymentProfile)));
+    });
+
+    test('should return remote data when online and update cache', () async {
+      // arrange
+      when(mockLocalDataSource.getById(any))
+          .thenAnswer((_) async => tEmploymentProfile);
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      when(mockRemoteDataSource.getById(any))
+          .thenAnswer((_) async => tEmploymentProfile);
+
+      // act
+      final result = await repository.getById(tId);
+
+      // assert
+      verify(mockLocalDataSource.getById(tId));
+      verify(mockRemoteDataSource.getById(tId));
+      verify(mockLocalDataSource.save(tEmploymentProfile));
+      expect(result, equals(Right(tEmploymentProfile)));
+    });
+
+    test('should return failure when offline and no cache', () async {
+      // arrange
+      when(mockLocalDataSource.getById(any)).thenThrow(CacheException('No data'));
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => false);
+
+      // act
+      final result = await repository.getById(tId);
+
+      // assert
+      verify(mockLocalDataSource.getById(tId));
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<CacheFailure>()),
+        (_) => fail('should return a failure'),
+      );
+    });
+    
+    // More tests...
+  });
+  
+  // More groups for other methods...
+}
+```
+
+## Implementation with Flutter Data
+
+For a more concise implementation, HR Connect also leverages Flutter Data which handles many offline-first concerns:
+
+```dart
+/// Repository implementation using Flutter Data
+@DataRepository([EmploymentProfile])
+class EmploymentProfileRepositoryFlutterData extends EmploymentProfileRepository 
+    with DataRepositoryMixin<EmploymentProfile> {
+  
+  @override
+  Future<Either<Failure, EmploymentProfile>> getById(String id) async {
+    try {
+      // Flutter Data handles offline-first automatically
+      final profile = await findOne(id);
+      return Right(profile);
+    } on RepositoryException catch (e) {
+      return Left(RepositoryFailure(e.message));
+    } catch (e) {
+      return Left(UnexpectedFailure(e.toString()));
+    }
+  }
+  
+  @override
+  Future<Either<Failure, Unit>> save(EmploymentProfile profile) async {
+    try {
+      await save(profile);
+      return const Right(unit);
+    } on RepositoryException catch (e) {
+      return Left(RepositoryFailure(e.message));
+    } catch (e) {
+      return Left(UnexpectedFailure(e.toString()));
+    }
+  }
+  
+  @override
+  Stream<Either<Failure, EmploymentProfile>> watchById(String id) {
+    return watchOne(id)
+      .map((profile) => Right(profile))
+      .handleError((error) => Left(UnexpectedFailure(error.toString())));
+  }
+  
+  // Other methods...
+}
+```
+
+## Implementation Process
+
+When implementing a new repository:
+
+1. Define the domain entity and its repository interface
+2. Create local and remote data sources with appropriate models
+3. Implement the repository with offline-first approach
+4. Write comprehensive tests for all scenarios
+5. Document business rules and sync priorities
+
+## Specialized Repository Types
+
+### SyncQueueRepository
+
+```dart
+/// Repository for managing synchronization queue
+abstract class SyncQueueRepository {
+  /// Add a new operation to the sync queue
+  Future<Either<Failure, Unit>> add(SyncOperation operation);
+  
+  /// Get all pending operations
+  Future<Either<Failure, List<SyncOperation>>> getPendingOperations();
+  
+  /// Get operations by priority
+  Future<Either<Failure, List<SyncOperation>>> getByPriority(SyncPriority priority);
+  
+  /// Mark operation as completed
+  Future<Either<Failure, Unit>> markAsCompleted(String operationId);
+  
+  /// Mark operation as failed
+  Future<Either<Failure, Unit>> markAsFailed(String operationId, String error);
+}
+```
+
+### AttendanceQrRepository
+
+```dart
+/// Repository for QR code-based attendance
+abstract class AttendanceQrRepository {
+  /// Generate new QR code for attendance
+  Future<Either<Failure, QrCode>> generateQrCode(String branchId);
+  
+  /// Validate scanned QR code
+  Future<Either<Failure, AttendanceValidationResult>> validateQrCode(String qrData);
+  
+  /// Submit attendance with QR code
+  Future<Either<Failure, AttendanceRecord>> submitAttendance(
+    String employeeId, 
+    String qrData, 
+    AttendanceType type,
+  );
+}
+
+```

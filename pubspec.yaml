@@ -1,0 +1,137 @@
+name: hr_connect
+description: "Comprehensive mobile workforce management solution with offline-first architecture"
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.7.0 <4.0.0'
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  # Temporarily commented out firebase packages for testing
+  # cloud_firestore: ^4.12.1      # Primary cloud database for HR Connect employee records
+  connectivity_plus: ^5.0.2 # Detects network state changes to trigger attendance sync
+  cupertino_icons: ^1.0.2
+  dart_jsonwebtoken: ^2.12.1  # Implements JWT tokens for HR Connect authentication
+  dartz: ^0.10.1           # Implements Either type for error handling in payroll calculations
+  data_table_2: ^2.5.6       # Powers employee management tables in admin dashboard
+  decimal: ^2.3.3             # Provides precise decimal calculations for payroll
+  dio: ^5.3.3                # Primary HTTP client for HR Connect API communication
+  drift: ^2.26.1           # Primary HR Connect database for employees, attendance records
+  drift_dev: ^2.26.1       # Generates database access code for HR Connect tables
+  encrypt: ^5.0.1          # Additional encryption layer for personal employee data
+  equatable: ^2.0.5        # Ensures proper equality comparisons for Employee and Attendance models
+  # firebase_auth: ^4.12.0        # Optional cloud authentication provider
+  # firebase_core: ^2.19.0       # Core Firebase functionality for HR Connect
+  # firebase_storage: ^11.4.0    # Cloud storage solution for HR Connect documents
+  fl_chart: ^0.66.0          # Creates attendance trend visualization 
+  flutter:
+    sdk: flutter
+  flutter_data: ^2.0.0    # Seamless data persistence framework with offline-first capability
+  flutter_form_builder: ^9.1.1  # Handles employee data entry with validation
+  flutter_localizations:
+    sdk: flutter
+  flutter_riverpod: ^2.6.1 # Flutter UI integration with Riverpod for employee lists and forms
+  flutter_secure_storage: ^9.0.0  # Securely stores HR Connect authentication tokens
+  freezed_annotation: ^3.0.0  # Creates immutable models for Employee and Attendance entities
+  get_it: ^7.6.0           # Service locator for HR Connect's dependency injection system
+  go_router: ^15.1.1
+  http: ^1.1.0               # Secondary HTTP client for simple API calls
+  injectable: ^2.1.2       # Generates boilerplate for get_it to simplify DI
+  internet_connection_checker: ^1.0.0+1  # Validates actual internet connectivity
+  intl: ^0.19.0              # Provides multilingual support as required in PRD
+  json_annotation: ^4.8.1     # Handles serialization of employee records for API communication
+  local_auth: ^2.1.6         # Secures access to sensitive employee information
+  logger: ^2.0.2+1            # Provides structured logging for attendance tracking events
+  material_design_icons_flutter: ^7.0.7296  # Provides consistent iconography
+  mobile_scanner: ^7.0.0  # Core attendance feature for scanning workplace QR codes
+  money2: ^4.0.0              # Manages currency formatting and conversion
+  path_provider: ^2.1.1    # Manages paths for local attendance record storage
+  qr_flutter: ^4.1.0       # Generates unique QR codes for each branch office
+  riverpod: ^2.6.1         # Core state management for HR Connect as specified in PRD
+  riverpod_generator: ^2.6.5 # Generates Provider code to reduce boilerplate
+  rxdart: ^0.27.7          # Handles complex attendance event streams
+  table_calendar: ^3.0.9     # Displays employee attendance calendar view
+  uuid: ^4.1.0                # Generates unique IDs for attendance records
+  workmanager: ^0.5.2      # Schedules background attendance data synchronization
+
+dev_dependencies:
+  bloc_test: ^9.1.5            # Tests state transitions in feature workflows
+  build_runner: ^2.4.6         # Runs code generation for database, models, and providers
+  change_app_package_name: ^1.1.0  # Updates package identifiers for deployment
+  envied_generator: ^1.0.0          # Handles environment-specific configuration
+  flutter_lints: ^3.0.1        # Enforces HR Connect coding standards
+  flutter_test:
+    sdk: flutter
+  freezed: ^3.0.0              # Generates immutable model classes for HR entities
+  golden_toolkit: ^0.15.0       # Validates UI appearance against reference designs
+  injectable_generator: ^2.7.0 # Generates dependency injection code for HR services
+  integration_test:            # Tests full employee attendance workflows
+    sdk: flutter
+  json_serializable: ^6.7.1    # Generates JSON serialization for API responses
+  mockito: ^5.4.2              # Creates mocks for API and database dependencies
+  mocktail: ^1.0.1             # Provides simplified mocking for repository testing
+  patrol: ^3.15.1               # Performs end-to-end testing of complete workflows
+  riverpod_test: ^0.1.9        # Tests state management for attendance features
+  test: ^1.24.9                # Core testing framework for domain logic
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  # To add assets to your application, add an assets section, like this:
+  assets:
+    - assets/images/          # Contains employee avatars and company logos
+    - assets/icons/           # Stores custom HR-specific icons and attendance status indicators
+    - assets/config/          # Holds environment configuration files
+    - assets/translations/    # Contains localization files for multilingual support
+
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/to/resolution-aware-images
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/to/asset-from-package
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  # fonts:
+  #   - family: Roboto          # Primary font family for HR Connect interface
+  #     fonts:
+  #       - asset: assets/fonts/Roboto-Regular.ttf  # Standard text in employee listings
+  #       - asset: assets/fonts/Roboto-Medium.ttf   # Section headers and list titles
+  #         weight: 500
+  #       - asset: assets/fonts/Roboto-Bold.ttf     # Important information and confirmations
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package

@@ -1,0 +1,589 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces the 7-day (168-hour) offline operation limit for the HR Connect application
+globs: "**/offline*.dart,**/sync*.dart,**/auth*.dart,**/connectivity*.dart"
+alwaysApply: false
+@offlineTimeLimit
+---
+
+# Offline Operation Time Limit
+
+This rule provides guidance for implementing and enforcing the 7-day (168-hour) offline operation time limit in the HR Connect application. This is a critical business constraint that ensures data integrity and security while allowing for flexible offline usage.
+
+## Core Principles
+
+1. The application must enforce a maximum offline period of 7 days (168 hours)
+2. Authentication tokens must expire after this time limit
+3. Offline data operations must be tracked with timestamps
+4. Sync operations must prioritize based on time constraints
+5. Users must be notified as they approach the time limit
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Connectivity monitoring
+  connectivity_plus: ^5.0.2
+  internet_connection_checker: ^1.0.0+1
+  
+  # Background processing
+  workmanager: ^0.5.2
+  
+  # Time handling and formatting
+  intl: ^0.20.2
+  
+  # Secure storage
+  flutter_secure_storage: ^9.2.4
+  
+  # State management
+  riverpod: ^2.6.1
+  flutter_riverpod: ^2.6.1
+```
+
+## Offline Time Tracking Implementation
+
+### OfflineTimeTracker Class
+
+```dart
+/// Tracks the time spent in offline mode and enforces the 7-day limit
+class OfflineTimeTracker {
+  static const Duration maxOfflineDuration = Duration(hours: 168); // 7 days
+  
+  final SharedPreferences _prefs;
+  final ConnectivityService _connectivity;
+  final AuthenticationRepository _authRepository;
+  
+  OfflineTimeTracker(this._prefs, this._connectivity, this._authRepository);
+  
+  /// Initializes the offline time tracker
+  Future<void> initialize() async {
+    // Listen to connectivity changes
+    _connectivity.onConnectivityChanged.listen(_handleConnectivityChange);
+    
+    // Check initial connectivity
+    final isConnected = await _connectivity.isConnected;
+    if (!isConnected) {
+      await _recordOfflineStart();
+    }
+  }
+  
+  /// Records when the device goes offline
+  Future<void> _recordOfflineStart() async {
+    final now = DateTime.now();
+    await _prefs.setString('offline_start_time', now.toIso8601String());
+    
+    // Schedule check for offline time limit
+    _scheduleOfflineLimitCheck();
+  }
+  
+  /// Records when the device comes back online
+  Future<void> _recordOfflineEnd() async {
+    await _prefs.remove('offline_start_time');
+    
+    // Cancel any scheduled checks
+    await WorkManager().cancelByTag('offline_limit_check');
+  }
+  
+  /// Handles connectivity changes
+  Future<void> _handleConnectivityChange(bool isConnected) async {
+    if (isConnected) {
+      await _recordOfflineEnd();
+    } else {
+      await _recordOfflineStart();
+    }
+  }
+  
+  /// Schedules periodic checks for offline time limit
+  Future<void> _scheduleOfflineLimitCheck() async {
+    await WorkManager().registerPeriodicTask(
+      'offline_limit_check',
+      'offlineLimitCheck',
+      frequency: Duration(hours: 6),
+      constraints: Constraints(
+        networkType: NetworkType.not_required,
+        requiresBatteryNotLow: false,
+      ),
+      existingWorkPolicy: ExistingWorkPolicy.replace,
+    );
+  }
+  
+  /// Checks if the offline time limit has been exceeded
+  Future<bool> hasExceededOfflineLimit() async {
+    final offlineStartStr = _prefs.getString('offline_start_time');
+    if (offlineStartStr == null) {
+      return false; // Not offline
+    }
+    
+    final offlineStart = DateTime.parse(offlineStartStr);
+    final now = DateTime.now();
+    final offlineDuration = now.difference(offlineStart);
+    
+    return offlineDuration > maxOfflineDuration;
+  }
+  
+  /// Gets the remaining offline time
+  Future<Duration> getRemainingOfflineTime() async {
+    final offlineStartStr = _prefs.getString('offline_start_time');
+    if (offlineStartStr == null) {
+      return maxOfflineDuration; // Not offline, return max duration
+    }
+    
+    final offlineStart = DateTime.parse(offlineStartStr);
+    final now = DateTime.now();
+    final offlineDuration = now.difference(offlineStart);
+    
+    if (offlineDuration >= maxOfflineDuration) {
+      return Duration.zero;
+    }
+    
+    return maxOfflineDuration - offlineDuration;
+  }
+  
+  /// Enforces the offline time limit by logging out if exceeded
+  Future<void> enforceOfflineLimit() async {
+    final hasExceeded = await hasExceededOfflineLimit();
+    if (hasExceeded) {
+      // Log out the user
+      await _authRepository.logOut(reason: LogoutReason.offlineLimitExceeded);
+      
+      // Clear offline data that exceeds the time limit
+      await _clearExpiredOfflineData();
+    }
+  }
+  
+  /// Clears expired offline data
+  Future<void> _clearExpiredOfflineData() async {
+    // Clear sensitive cached data
+    // Implementation depends on storage strategy
+  }
+}
+```
+
+### WorkManager Implementation
+
+```dart
+/// Register the offline limit check task
+void registerOfflineTasks() {
+  WorkManager().initialize(
+    callbackDispatcher,
+    isInDebugMode: kDebugMode,
+  );
+}
+
+/// The callback dispatcher for background tasks
+void callbackDispatcher() {
+  WorkManager().executeTask((task, inputData) async {
+    final container = ProviderContainer();
+    
+    switch (task) {
+      case 'offlineLimitCheck':
+        final offlineTracker = container.read(offlineTrackerProvider);
+        await offlineTracker.enforceOfflineLimit();
+        break;
+      default:
+        break;
+    }
+    
+    return true;
+  });
+}
+
+/// Provider for the OfflineTimeTracker
+final offlineTrackerProvider = Provider<OfflineTimeTracker>((ref) {
+  final prefs = ref.watch(sharedPreferencesProvider);
+  final connectivity = ref.watch(connectivityServiceProvider);
+  final authRepository = ref.watch(authRepositoryProvider);
+  
+  return OfflineTimeTracker(prefs, connectivity, authRepository);
+});
+```
+
+## Authentication Token Expiration
+
+```dart
+/// Authentication token with expiration based on offline limit
+class AuthToken {
+  final String token;
+  final String refreshToken;
+  final DateTime issuedAt;
+  final DateTime expiresAt;
+  
+  const AuthToken({
+    required this.token,
+    required this.refreshToken,
+    required this.issuedAt,
+    required this.expiresAt,
+  });
+  
+  /// Checks if the token has expired
+  bool isExpired() {
+    final now = DateTime.now();
+    return now.isAfter(expiresAt);
+  }
+  
+  /// Checks if the token was issued more than 7 days ago
+  bool isOlderThanOfflineLimit() {
+    final now = DateTime.now();
+    final offlineLimitDuration = Duration(hours: 168); // 7 days
+    final offlineLimitCutoff = now.subtract(offlineLimitDuration);
+    
+    return issuedAt.isBefore(offlineLimitCutoff);
+  }
+  
+  /// Creates a token from a JSON response
+  factory AuthToken.fromJson(Map<String, dynamic> json) {
+    final issuedAt = DateTime.parse(json['issued_at']);
+    
+    // Calculate expiration based on issued time + 7 days max
+    final expiresAt = DateTime.now().add(Duration(hours: 168));
+    
+    return AuthToken(
+      token: json['token'],
+      refreshToken: json['refresh_token'],
+      issuedAt: issuedAt,
+      expiresAt: expiresAt,
+    );
+  }
+  
+  /// Converts the token to JSON
+  Map<String, dynamic> toJson() => {
+    'token': token,
+    'refresh_token': refreshToken,
+    'issued_at': issuedAt.toIso8601String(),
+    'expires_at': expiresAt.toIso8601String(),
+  };
+}
+```
+
+## Offline Status Notification UI Component
+
+```dart
+/// Widget to display the remaining offline time
+class OfflineStatusBanner extends ConsumerWidget {
+  const OfflineStatusBanner({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isConnected = ref.watch(connectivityProvider);
+    
+    // Only show if offline
+    if (isConnected) {
+      return SizedBox.shrink();
+    }
+    
+    final remainingTimeAsync = ref.watch(remainingOfflineTimeProvider);
+    
+    return remainingTimeAsync.when(
+      data: (remainingTime) {
+        final days = remainingTime.inDays;
+        final hours = remainingTime.inHours % 24;
+        
+        // Change the UI based on remaining time
+        Color bannerColor = Colors.blue;
+        if (remainingTime.inHours < 24) {
+          bannerColor = Colors.red;
+        } else if (remainingTime.inHours < 72) {
+          bannerColor = Colors.orange;
+        }
+        
+        return Container(
+          color: bannerColor,
+          padding: EdgeInsets.symmetric(vertical: 4, horizontal: 16),
+          child: Row(
+            children: [
+              Icon(Icons.wifi_off, size: 16, color: Colors.white),
+              SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Offline Mode: $days days, $hours hours remaining',
+                  style: TextStyle(color: Colors.white, fontSize: 12),
+                ),
+              ),
+              if (remainingTime.inHours < 24)
+                TextButton(
+                  onPressed: () => _showOfflineLimitDialog(context),
+                  child: Text('Action Required', style: TextStyle(color: Colors.white)),
+                  style: TextButton.styleFrom(
+                    padding: EdgeInsets.symmetric(horizontal: 8),
+                    minimumSize: Size(0, 24),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+      loading: () => SizedBox.shrink(),
+      error: (_, __) => SizedBox.shrink(),
+    );
+  }
+  
+  void _showOfflineLimitDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Text('Offline Limit Warning'),
+        content: Text(
+          'Your offline access will expire in less than 24 hours. Please connect to the internet to continue using the app.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: Text('OK'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Provider for the remaining offline time
+final remainingOfflineTimeProvider = FutureProvider<Duration>((ref) async {
+  final offlineTracker = ref.watch(offlineTrackerProvider);
+  return offlineTracker.getRemainingOfflineTime();
+});
+```
+
+## Sync Queue with Time-Based Prioritization
+
+```dart
+/// Sync operation with priority based on time constraints
+class SyncOperation {
+  final String id;
+  final SyncType type;
+  final String entityId;
+  final DateTime createdAt;
+  final SyncPriority priority;
+  
+  const SyncOperation({
+    required this.id,
+    required this.type,
+    required this.entityId,
+    required this.createdAt,
+    required this.priority,
+  });
+  
+  /// Updates priority based on offline time constraints
+  SyncOperation withTimePriority(Duration remainingOfflineTime) {
+    // If less than 24 hours remaining, increase priority
+    if (remainingOfflineTime.inHours < 24) {
+      switch (priority) {
+        case SyncPriority.low:
+          return copyWith(priority: SyncPriority.medium);
+        case SyncPriority.medium:
+          return copyWith(priority: SyncPriority.high);
+        case SyncPriority.high:
+          return copyWith(priority: SyncPriority.critical);
+        case SyncPriority.critical:
+          return this;
+      }
+    }
+    return this;
+  }
+  
+  SyncOperation copyWith({
+    String? id,
+    SyncType? type,
+    String? entityId,
+    DateTime? createdAt,
+    SyncPriority? priority,
+  }) {
+    return SyncOperation(
+      id: id ?? this.id,
+      type: type ?? this.type,
+      entityId: entityId ?? this.entityId,
+      createdAt: createdAt ?? this.createdAt,
+      priority: priority ?? this.priority,
+    );
+  }
+}
+
+/// Sync priority enum
+enum SyncPriority {
+  low,
+  medium,
+  high,
+  critical,
+}
+
+/// Sync queue that prioritizes operations based on offline time limit
+class SyncQueue {
+  final List<SyncOperation> _operations = [];
+  final OfflineTimeTracker _offlineTracker;
+  
+  SyncQueue(this._offlineTracker);
+  
+  /// Adds an operation to the queue
+  void addOperation(SyncOperation operation) {
+    _operations.add(operation);
+    _sortQueue();
+  }
+  
+  /// Gets the next operation to process
+  SyncOperation? getNextOperation() {
+    if (_operations.isEmpty) {
+      return null;
+    }
+    return _operations.first;
+  }
+  
+  /// Removes an operation from the queue
+  void removeOperation(String id) {
+    _operations.removeWhere((op) => op.id == id);
+  }
+  
+  /// Updates priorities based on remaining offline time
+  Future<void> updatePriorities() async {
+    final remainingTime = await _offlineTracker.getRemainingOfflineTime();
+    
+    for (int i = 0; i < _operations.length; i++) {
+      _operations[i] = _operations[i].withTimePriority(remainingTime);
+    }
+    
+    _sortQueue();
+  }
+  
+  /// Sorts the queue based on priority and creation time
+  void _sortQueue() {
+    _operations.sort((a, b) {
+      // First by priority (critical first)
+      final priorityComparison = b.priority.index.compareTo(a.priority.index);
+      if (priorityComparison != 0) {
+        return priorityComparison;
+      }
+      
+      // Then by creation time (oldest first)
+      return a.createdAt.compareTo(b.createdAt);
+    });
+  }
+}
+```
+
+## Business Rules for Offline Time Limit
+
+1. **Maximum Offline Duration**
+   - The application must enforce a maximum offline period of 7 days (168 hours)
+   - After this period, the user must connect to the internet to continue using the app
+   - Authentication tokens must expire after the 7-day period
+
+2. **Offline Time Tracking**
+   - The application must track when the device goes offline
+   - Background tasks must periodically check the offline duration
+   - The user must be notified as they approach the time limit
+
+3. **Prioritized Synchronization**
+   - As the offline limit approaches, sync operations must be prioritized
+   - Critical data (attendance records, approvals) must be synchronized first
+   - Background sync frequency should increase as the limit approaches
+
+4. **Graceful Degradation**
+   - When the offline limit is reached, the app must:
+     - Require the user to log in again
+     - Preserve local data until successfully synchronized
+     - Prevent access to sensitive features until reconnected
+     - Provide clear error messages about the offline limit
+
+5. **Security Constraints**
+   - Authentication tokens must expire after 7 days offline
+   - Sensitive cached data must be cleared after the time limit
+   - Field-level encryption keys must not be available after the limit
+   - Audit records must be created for offline limit enforcement
+
+## Testing Approach
+
+```dart
+void main() {
+  group('OfflineTimeTracker', () {
+    late MockSharedPreferences mockPrefs;
+    late MockConnectivityService mockConnectivity;
+    late MockAuthRepository mockAuthRepository;
+    late OfflineTimeTracker offlineTracker;
+    
+    setUp(() {
+      mockPrefs = MockSharedPreferences();
+      mockConnectivity = MockConnectivityService();
+      mockAuthRepository = MockAuthRepository();
+      offlineTracker = OfflineTimeTracker(
+        mockPrefs,
+        mockConnectivity,
+        mockAuthRepository,
+      );
+    });
+    
+    test('should correctly calculate if offline limit exceeded', () async {
+      // Arrange - Set offline start time to 8 days ago
+      final eightDaysAgo = DateTime.now().subtract(Duration(days: 8));
+      when(mockPrefs.getString('offline_start_time'))
+          .thenReturn(eightDaysAgo.toIso8601String());
+      
+      // Act
+      final hasExceeded = await offlineTracker.hasExceededOfflineLimit();
+      
+      // Assert
+      expect(hasExceeded, isTrue);
+    });
+    
+    test('should correctly calculate remaining offline time', () async {
+      // Arrange - Set offline start time to 3 days ago
+      final threeDaysAgo = DateTime.now().subtract(Duration(days: 3));
+      when(mockPrefs.getString('offline_start_time'))
+          .thenReturn(threeDaysAgo.toIso8601String());
+      
+      // Act
+      final remainingTime = await offlineTracker.getRemainingOfflineTime();
+      
+      // Assert
+      expect(remainingTime.inDays, 4); // Approximately 4 days remaining
+    });
+    
+    test('should enforce offline limit by logging out', () async {
+      // Arrange
+      when(mockPrefs.getString('offline_start_time'))
+          .thenReturn(DateTime.now().subtract(Duration(days: 8)).toIso8601String());
+      
+      // Act
+      await offlineTracker.enforceOfflineLimit();
+      
+      // Assert
+      verify(mockAuthRepository.logOut(
+        reason: LogoutReason.offlineLimitExceeded,
+      )).called(1);
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Early Warning System**
+   - Notify users at 144 hours (6 days), 156 hours (6.5 days), and 162 hours (6.75 days)
+   - Use increasingly visible UI indicators as the limit approaches
+   - Provide clear guidance on how to reconnect and sync data
+
+2. **Offline Time Calculation**
+   - Store the offline start time in secure storage, not just in memory
+   - Calculate the difference between current time and offline start time
+   - Use non-manipulable system time sources when available
+
+3. **Token Management**
+   - Include issuedAt timestamp in token payload
+   - Verify token age during authentication checks
+   - Store refresh tokens securely with expiration enforcement
+   - Implement token revalidation on reconnect
+
+4. **Edge Cases**
+   - Handle device time changes by periodically verifying timeframe
+   - Manage time zone changes that might affect duration calculations
+   - Have fallback mechanisms for calendar anomalies (leap years, DST)
+   - Consider using server-provided timestamps when available
+
+5. **Performance Considerations**
+   - Minimize storage operations for time tracking
+   - Use lightweight background tasks for limit enforcement
+   - Consider battery impact of increased sync frequency
+
+   - Cache time calculations to reduce redundant operations

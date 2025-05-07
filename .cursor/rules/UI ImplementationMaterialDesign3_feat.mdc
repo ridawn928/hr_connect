@@ -1,0 +1,1159 @@
+---
+description: 
+globs: **/ui/**/*.dart,**/widgets/**/*.dart,**/pages/**/*.dart,**/screens/**/*.dart,**/presentation/**/*.dart,**/theme/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's UI with Material Design 3
+globs: **/ui/**/*.dart,**/widgets/**/*.dart,**/pages/**/*.dart,**/screens/**/*.dart,**/presentation/**/*.dart,**/theme/**/*.dart
+alwaysApply: false
+---
+
+# UI Implementation with Material Design 3
+
+This rule provides implementation guidance for the UI components of HR Connect - a Flutter-based workforce management solution following Material Design 3 principles.
+
+## Feature Overview
+
+The UI Implementation with Material Design 3 features:
+- Material Design 3 theming and color schemes
+- Responsive layouts for mobile, tablet, and desktop
+- Offline status indicators
+- Permission-aware UI components
+- Memory-efficient list views with pagination
+- Error and empty state standardization
+- Loading state consistency
+- Optimistic UI updates with sync status indicators
+- Data visualization components (Syncfusion Flutter Charts)
+
+## Required Packages
+
+```yaml
+dependencies:
+  # UI Framework
+  flutter:
+    sdk: flutter
+    
+  # Material Design
+  material_design_icons_flutter: ^7.0.7296  # Extended icon set
+  
+  # Responsive UI
+  flutter_screenutil: ^5.9.0    # Screen adaptation utility
+  responsive_builder: ^0.7.0     # Responsive layout widgets
+  
+  # UI Components  
+  data_table_2: ^2.5.6            # Enhanced data tables
+  syncfusion_flutter_charts: ^23.1.36  # Data visualization
+  flutter_form_builder: ^9.1.0    # Form building and validation
+  table_calendar: ^3.0.9          # Calendar widget
+  cached_network_image: ^3.3.1    # Image caching
+  
+  # State Management & Utils
+  riverpod: ^2.6.1                # State management
+  flutter_riverpod: ^2.6.1        # Flutter integration for Riverpod
+  connectivity_plus: ^5.0.2       # Network connectivity detection
+```
+
+## Theme Implementation
+
+### Theme Configuration
+
+```dart
+/// Main theme configuration for HR Connect
+class AppTheme {
+  // Primary color palette based on company branding
+  static const Color _primaryColor = Color(0xFF1E88E5);
+  
+  /// Create light theme for the application
+  static ThemeData lightTheme() {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: _primaryColor,
+      brightness: Brightness.light,
+    );
+    
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      appBarTheme: AppBarTheme(
+        backgroundColor: colorScheme.primaryContainer,
+        foregroundColor: colorScheme.onPrimaryContainer,
+        elevation: 0,
+      ),
+      cardTheme: CardTheme(
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          foregroundColor: colorScheme.onPrimary,
+          backgroundColor: colorScheme.primary,
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: colorScheme.primary,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: colorScheme.primary,
+          side: BorderSide(color: colorScheme.primary),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: colorScheme.surface,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: colorScheme.outline),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: colorScheme.outline),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: colorScheme.primary, width: 2),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(8),
+          borderSide: BorderSide(color: colorScheme.error),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      ),
+      chipTheme: ChipThemeData(
+        backgroundColor: colorScheme.surfaceVariant,
+        labelStyle: TextStyle(color: colorScheme.onSurfaceVariant),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+      ),
+      dividerTheme: DividerThemeData(
+        color: colorScheme.outlineVariant,
+        thickness: 1,
+      ),
+      scaffoldBackgroundColor: colorScheme.background,
+      // Add more theme customizations as needed
+    );
+  }
+  
+  /// Create dark theme for the application
+  static ThemeData darkTheme() {
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: _primaryColor,
+      brightness: Brightness.dark,
+    );
+    
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: colorScheme,
+      // Apply same pattern as lightTheme with dark mode adjustments
+      // ...
+    );
+  }
+}
+```
+
+### Theme Provider
+
+```dart
+/// Provider for application theme
+final themeProvider = StateNotifierProvider<ThemeNotifier, ThemeMode>((ref) {
+  return ThemeNotifier();
+});
+
+/// Notifier to manage theme state
+class ThemeNotifier extends StateNotifier<ThemeMode> {
+  ThemeNotifier() : super(ThemeMode.system) {
+    _loadThemePreference();
+  }
+  
+  /// Load saved theme preference
+  Future<void> _loadThemePreference() async {
+    final prefs = await SharedPreferences.getInstance();
+    final themeIndex = prefs.getInt('theme_mode') ?? 0;
+    state = ThemeMode.values[themeIndex];
+  }
+  
+  /// Toggle between light, dark, and system theme
+  Future<void> toggleTheme() async {
+    final nextState = state == ThemeMode.light 
+        ? ThemeMode.dark 
+        : (state == ThemeMode.dark ? ThemeMode.system : ThemeMode.light);
+    
+    state = nextState;
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_mode', nextState.index);
+  }
+  
+  /// Set specific theme mode
+  Future<void> setThemeMode(ThemeMode mode) async {
+    state = mode;
+    
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_mode', mode.index);
+  }
+}
+```
+
+## Responsive Layout Implementation
+
+### Responsive Layout Builder
+
+```dart
+/// Screen size breakpoints
+class AppBreakpoints {
+  static const double mobile = 600;
+  static const double tablet = 900;
+  static const double desktop = 1200;
+}
+
+/// Responsive layout builder for different screen sizes
+class ResponsiveLayout extends StatelessWidget {
+  final Widget mobile;
+  final Widget? tablet;
+  final Widget? desktop;
+  
+  const ResponsiveLayout({
+    Key? key,
+    required this.mobile,
+    this.tablet,
+    this.desktop,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= AppBreakpoints.desktop) {
+          return desktop ?? tablet ?? mobile;
+        } else if (constraints.maxWidth >= AppBreakpoints.tablet) {
+          return tablet ?? mobile;
+        } else {
+          return mobile;
+        }
+      },
+    );
+  }
+}
+```
+
+### Responsive Example Screen
+
+```dart
+class EmployeeListScreen extends StatelessWidget {
+  const EmployeeListScreen({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Employee Directory'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.search),
+            onPressed: () => _showSearch(context),
+          ),
+          IconButton(
+            icon: const Icon(Icons.filter_list),
+            onPressed: () => _showFilters(context),
+          ),
+        ],
+      ),
+      body: ResponsiveLayout(
+        mobile: _buildMobileLayout(),
+        tablet: _buildTabletLayout(),
+        desktop: _buildDesktopLayout(),
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: () => _addEmployee(context),
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+  
+  Widget _buildMobileLayout() {
+    return Consumer(
+      builder: (context, ref, child) {
+        final employeesAsync = ref.watch(employeesProvider);
+        
+        return employeesAsync.when(
+          data: (employees) => ListView.builder(
+            itemCount: employees.length,
+            itemBuilder: (context, index) => EmployeeListItem(
+              employee: employees[index],
+              onTap: () => _viewEmployeeDetails(context, employees[index]),
+            ),
+          ),
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (error, stack) => ErrorDisplay(
+            message: 'Failed to load employees',
+            onRetry: () => ref.refresh(employeesProvider),
+          ),
+        );
+      },
+    );
+  }
+  
+  Widget _buildTabletLayout() {
+    return Consumer(
+      builder: (context, ref, child) {
+        final employeesAsync = ref.watch(employeesProvider);
+        final selectedEmployeeId = ref.watch(selectedEmployeeProvider);
+        
+        return Row(
+          children: [
+            Expanded(
+              flex: 2,
+              child: employeesAsync.when(
+                data: (employees) => ListView.builder(
+                  itemCount: employees.length,
+                  itemBuilder: (context, index) => EmployeeListItem(
+                    employee: employees[index],
+                    isSelected: employees[index].id == selectedEmployeeId,
+                    onTap: () => ref.read(selectedEmployeeProvider.notifier)
+                      .state = employees[index].id,
+                  ),
+                ),
+                loading: () => const Center(child: CircularProgressIndicator()),
+                error: (error, stack) => ErrorDisplay(
+                  message: 'Failed to load employees',
+                  onRetry: () => ref.refresh(employeesProvider),
+                ),
+              ),
+            ),
+            VerticalDivider(
+              width: 1,
+              color: Theme.of(context).dividerColor,
+            ),
+            if (selectedEmployeeId != null)
+              Expanded(
+                flex: 3,
+                child: EmployeeDetailPanel(
+                  employeeId: selectedEmployeeId,
+                ),
+              )
+            else
+              const Expanded(
+                flex: 3,
+                child: Center(
+                  child: Text('Select an employee to view details'),
+                ),
+              ),
+          ],
+        );
+      },
+    );
+  }
+  
+  Widget _buildDesktopLayout() {
+    // Similar to tablet but with different proportions and possibly
+    // additional UI elements like a sidebar navigation panel
+    return const SizedBox(); // Example placeholder
+  }
+  
+  void _showSearch(BuildContext context) {
+    // Implementation
+  }
+  
+  void _showFilters(BuildContext context) {
+    // Implementation
+  }
+  
+  void _addEmployee(BuildContext context) {
+    // Implementation
+  }
+  
+  void _viewEmployeeDetails(BuildContext context, Employee employee) {
+    // Implementation
+  }
+}
+```
+
+## Status Indicator Components
+
+### Offline Status Indicator
+
+```dart
+/// Banner to show when device is offline
+class OfflineStatusBanner extends ConsumerWidget {
+  final Widget? child;
+  
+  const OfflineStatusBanner({
+    Key? key,
+    this.child,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectivityStatus = ref.watch(connectivityProvider);
+    
+    return Column(
+      children: [
+        if (connectivityStatus == ConnectivityStatus.offline)
+          Container(
+            width: double.infinity,
+            color: Theme.of(context).colorScheme.errorContainer,
+            padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.cloud_off,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onErrorContainer,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'You are currently offline. Some features may be limited.',
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.onErrorContainer,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        if (child != null)
+          Expanded(child: child!),
+      ],
+    );
+  }
+}
+```
+
+### Sync Status Indicator
+
+```dart
+enum SyncIndicatorStyle {
+  icon,
+  badge,
+  full,
+}
+
+/// Indicator for sync status of entities
+class SyncStatusIndicator extends StatelessWidget {
+  final SyncStatus status;
+  final SyncIndicatorStyle style;
+  
+  const SyncStatusIndicator({
+    Key? key,
+    required this.status,
+    this.style = SyncIndicatorStyle.icon,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    switch (style) {
+      case SyncIndicatorStyle.icon:
+        return _buildIcon(context);
+      case SyncIndicatorStyle.badge:
+        return _buildBadge(context);
+      case SyncIndicatorStyle.full:
+        return _buildFull(context);
+    }
+  }
+  
+  Widget _buildIcon(BuildContext context) {
+    switch (status) {
+      case SyncStatus.synced:
+        return const Icon(Icons.cloud_done, size: 16, color: Colors.green);
+      case SyncStatus.pending:
+        return const Icon(Icons.cloud_upload, size: 16, color: Colors.orange);
+      case SyncStatus.error:
+        return const Icon(Icons.cloud_off, size: 16, color: Colors.red);
+      case SyncStatus.conflicted:
+        return const Icon(Icons.warning, size: 16, color: Colors.deepOrange);
+      default:
+        return const SizedBox.shrink();
+    }
+  }
+  
+  Widget _buildBadge(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: _getStatusColor(context).withOpacity(0.2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildIcon(context),
+          const SizedBox(width: 4),
+          Text(
+            _getStatusText(),
+            style: TextStyle(
+              fontSize: 12,
+              color: _getStatusColor(context),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildFull(BuildContext context) {
+    return Row(
+      children: [
+        _buildIcon(context),
+        const SizedBox(width: 8),
+        Text(
+          _getStatusText(),
+          style: TextStyle(
+            fontSize: 14,
+            color: _getStatusColor(context),
+          ),
+        ),
+      ],
+    );
+  }
+  
+  String _getStatusText() {
+    switch (status) {
+      case SyncStatus.synced:
+        return 'Synced';
+      case SyncStatus.pending:
+        return 'Pending';
+      case SyncStatus.error:
+        return 'Error';
+      case SyncStatus.conflicted:
+        return 'Conflict';
+      default:
+        return '';
+    }
+  }
+  
+  Color _getStatusColor(BuildContext context) {
+    switch (status) {
+      case SyncStatus.synced:
+        return Colors.green;
+      case SyncStatus.pending:
+        return Colors.orange;
+      case SyncStatus.error:
+        return Colors.red;
+      case SyncStatus.conflicted:
+        return Colors.deepOrange;
+      default:
+        return Colors.grey;
+    }
+  }
+}
+```
+
+## Permission-Aware UI Components
+
+### Permission-Aware Button
+
+```dart
+/// Button that only appears for users with specific permissions
+class PermissionAwareButton extends ConsumerWidget {
+  final String resource;
+  final PermissionAction action;
+  final VoidCallback onPressed;
+  final Widget child;
+  final ButtonStyle? style;
+  final bool showAsDisabled;
+  
+  const PermissionAwareButton({
+    Key? key,
+    required this.resource,
+    required this.action,
+    required this.onPressed,
+    required this.child,
+    this.style,
+    this.showAsDisabled = false,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasPermission = ref.watch(
+      userHasPermissionProvider(
+        resource: resource,
+        action: action,
+      ),
+    );
+    
+    if (!hasPermission && !showAsDisabled) {
+      return const SizedBox.shrink();
+    }
+    
+    return ElevatedButton(
+      onPressed: hasPermission ? onPressed : null,
+      style: style,
+      child: child,
+    );
+  }
+}
+```
+
+### Permission-Aware Widget
+
+```dart
+/// Wrapper widget that only shows content for users with permission
+class PermissionAware extends ConsumerWidget {
+  final String resource;
+  final PermissionAction action;
+  final Widget child;
+  final Widget? fallback;
+  
+  const PermissionAware({
+    Key? key,
+    required this.resource,
+    required this.action,
+    required this.child,
+    this.fallback,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasPermission = ref.watch(
+      userHasPermissionProvider(
+        resource: resource,
+        action: action,
+      ),
+    );
+    
+    if (hasPermission) {
+      return child;
+    } else {
+      return fallback ?? const SizedBox.shrink();
+    }
+  }
+}
+```
+
+## Memory-Efficient List Views
+
+### Paginated List View
+
+```dart
+/// Memory-efficient paginated list view for large datasets
+class PaginatedListView<T> extends StatefulWidget {
+  final PaginatedDataSource<T> dataSource;
+  final Widget Function(BuildContext context, T item) itemBuilder;
+  final Widget Function(BuildContext context, String message)? errorBuilder;
+  final Widget? loadingWidget;
+  final Widget? emptyWidget;
+  final int pageSize;
+  final ScrollController? scrollController;
+  
+  const PaginatedListView({
+    Key? key,
+    required this.dataSource,
+    required this.itemBuilder,
+    this.errorBuilder,
+    this.loadingWidget,
+    this.emptyWidget,
+    this.pageSize = 20,
+    this.scrollController,
+  }) : super(key: key);
+  
+  @override
+  State<PaginatedListView<T>> createState() => _PaginatedListViewState<T>();
+}
+
+class _PaginatedListViewState<T> extends State<PaginatedListView<T>> {
+  final List<T> _items = [];
+  bool _loading = false;
+  bool _hasMoreItems = true;
+  String? _error;
+  late ScrollController _scrollController;
+  int _currentPage = 0;
+  
+  @override
+  void initState() {
+    super.initState();
+    _scrollController = widget.scrollController ?? ScrollController();
+    _scrollController.addListener(_onScroll);
+    _loadMore();
+  }
+  
+  @override
+  void dispose() {
+    if (widget.scrollController == null) {
+      _scrollController.dispose();
+    } else {
+      _scrollController.removeListener(_onScroll);
+    }
+    super.dispose();
+  }
+  
+  void _onScroll() {
+    if (_scrollController.position.pixels >= 
+        _scrollController.position.maxScrollExtent - 200) {
+      _loadMore();
+    }
+  }
+  
+  Future<void> _loadMore() async {
+    if (_loading || !_hasMoreItems) return;
+    
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    
+    try {
+      final result = await widget.dataSource.fetchPage(
+        page: _currentPage,
+        pageSize: widget.pageSize,
+      );
+      
+      setState(() {
+        _items.addAll(result.items);
+        _hasMoreItems = result.hasMoreItems;
+        _currentPage++;
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _loading = false;
+      });
+    }
+  }
+  
+  Future<void> _refresh() async {
+    setState(() {
+      _items.clear();
+      _currentPage = 0;
+      _hasMoreItems = true;
+      _error = null;
+    });
+    
+    await _loadMore();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    if (_items.isEmpty && _loading) {
+      return widget.loadingWidget ?? 
+          const Center(child: CircularProgressIndicator());
+    }
+    
+    if (_items.isEmpty && _error != null) {
+      return widget.errorBuilder != null 
+          ? widget.errorBuilder!(context, _error!)
+          : Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('Error: $_error'),
+                  TextButton(
+                    onPressed: _refresh,
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            );
+    }
+    
+    if (_items.isEmpty) {
+      return widget.emptyWidget ?? 
+          const Center(child: Text('No items available'));
+    }
+    
+    return RefreshIndicator(
+      onRefresh: _refresh,
+      child: ListView.builder(
+        controller: _scrollController,
+        itemCount: _items.length + (_hasMoreItems ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (index == _items.length) {
+            return Container(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              alignment: Alignment.center,
+              child: const CircularProgressIndicator(),
+            );
+          }
+          
+          return widget.itemBuilder(context, _items[index]);
+        },
+      ),
+    );
+  }
+}
+
+/// Interface for paginated data sources
+abstract class PaginatedDataSource<T> {
+  Future<PageResult<T>> fetchPage({
+    required int page,
+    required int pageSize,
+  });
+}
+
+/// Result of a paginated data fetch
+class PageResult<T> {
+  final List<T> items;
+  final bool hasMoreItems;
+  
+  PageResult({
+    required this.items,
+    required this.hasMoreItems,
+  });
+}
+```
+
+## State Handling Components
+
+### Error Display Widget
+
+```dart
+/// Standardized error display widget
+class ErrorDisplay extends StatelessWidget {
+  final String message;
+  final String? details;
+  final VoidCallback? onRetry;
+  final IconData icon;
+  
+  const ErrorDisplay({
+    Key? key,
+    required this.message,
+    this.details,
+    this.onRetry,
+    this.icon = Icons.error_outline,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: Theme.of(context).colorScheme.error,
+              size: 56,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.error,
+              ),
+            ),
+            if (details != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                details!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (onRetry != null) ...[
+              const SizedBox(height: 24),
+              OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Try Again'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+### Empty State Widget
+
+```dart
+/// Standardized empty state widget
+class EmptyState extends StatelessWidget {
+  final String message;
+  final String? subMessage;
+  final IconData icon;
+  final Widget? actionButton;
+  
+  const EmptyState({
+    Key? key,
+    required this.message,
+    this.subMessage,
+    this.icon = Icons.inbox_outlined,
+    this.actionButton,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              size: 56,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            if (subMessage != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                subMessage!,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+            if (actionButton != null) ...[
+              const SizedBox(height: 24),
+              actionButton!,
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+```
+
+### Loading State Widgets
+
+```dart
+/// Collection of standardized loading indicators
+class AppLoadingIndicators {
+  /// Full-screen loading indicator
+  static Widget fullScreen({String? message}) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(),
+          if (message != null) ...[
+            const SizedBox(height: 16),
+            Text(message),
+          ],
+        ],
+      ),
+    );
+  }
+  
+  /// Loading indicator with a shimmer effect for list items
+  static Widget listItemShimmer(BuildContext context) {
+    return Shimmer.fromColors(
+      baseColor: Theme.of(context).colorScheme.surfaceVariant.withOpacity(0.5),
+      highlightColor: Theme.of(context).colorScheme.surface,
+      child: Card(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Container(
+          height: 80,
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                width: 48,
+                height: 48,
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      height: 12,
+                      color: Colors.white,
+                    ),
+                    const SizedBox(height: 8),
+                    Container(
+                      width: 100,
+                      height: 12,
+                      color: Colors.white,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+  
+  /// Overlay loading indicator for operations in progress
+  static Widget overlayLoading(BuildContext context, {String? message}) {
+    return Container(
+      color: Colors.black.withOpacity(0.5),
+      child: Center(
+        child: Card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const CircularProgressIndicator(),
+                if (message != null) ...[
+                  const SizedBox(height: 16),
+                  Text(message),
+                ],
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+```
+
+## Business Rules
+
+### 1. Theming Rules
+
+- **Color System**:
+  - Use seeded color schemes based on primary brand color
+  - Light and dark theme variants must be supported
+  - Color contrast ratios must meet WCAG AA accessibility standards
+  - Use semantic colors (error, success, warning) consistently
+
+- **Typography**:
+  - Follow Material 3 type scale for consistent text hierarchy
+  - Use appropriate text styles for each UI element (headings, body, captions)
+  - Maintain readable line lengths (60-80 characters per line maximum)
+  - Ensure minimum font size of 14sp for general text content
+
+- **Component Styling**:
+  - Apply consistent corner radius to all container elements
+  - Maintain consistent spacing using 8dp grid system
+  - Use elevation appropriately to indicate hierarchy
+  - Apply consistent padding within components
+
+### 2. Responsive Layout Rules
+
+- **Breakpoints**:
+  - Mobile: < 600dp
+  - Tablet: 600dp - 900dp
+  - Desktop: > 900dp
+
+- **Adaptation Requirements**:
+  - Mobile layouts use full-screen, single-column flows
+  - Tablet layouts can use master-detail pattern where appropriate
+  - Desktop layouts should use multi-column layouts with sidebars
+  - UI density should increase on larger screens
+
+- **Navigation Patterns**:
+  - Mobile: Bottom navigation or drawer
+  - Tablet: Rail navigation or expanded drawer
+  - Desktop: Persistent sidebar navigation
+  - Consistent navigation patterns across the application
+
+### 3. Offline Status Rules
+
+- **Indicator Visibility**:
+  - Offline status must be clearly visible to users
+  - Use standardized offline indicator for consistency
+  - Show on all screens requiring network connectivity
+  - Provide appropriate messaging based on feature limitations
+
+- **UI Adaptation**:
+  - Disable or visually indicate features unavailable offline
+  - Provide clear messaging for operations queued for synchronization
+  - Show sync status indicators for modified content
+  - Maintain visual consistency between online and offline states
+
+### 4. Permission-Aware UI Rules
+
+- **UI Element Visibility**:
+  - Hide actions/UI elements user doesn't have permission to use
+  - Use permission-aware wrappers for conditional rendering
+  - Maintain layout integrity when elements are hidden
+  - Optionally show disabled elements with appropriate indicators
+
+- **Role-Based Adaptations**:
+  - Employee role sees simplified interface
+  - Branch Manager sees team management interfaces
+  - Payroll Portal sees specialized administrative UI
+  - HR Portal sees full system administration UI
+
+### 5. State Handling Rules
+
+- **Loading States**:
+  - Use standardized loading indicators
+  - Show skeleton screens for initial content loading
+  - Show inline loading for partial updates
+  - Maintain loading state consistency across application
+
+- **Error States**:
+  - Use standardized error components
+  - Provide clear, user-friendly error messages
+  - Include retry options when appropriate
+  - Log technical details but show user-friendly messages
+
+- **Empty States**:
+  - Use standardized empty state components
+  - Provide clear messaging and next steps
+  - Maintain visual consistency across empty states
+  - Include appropriate call-to-action when applicable
+
+## Implementation Best Practices
+
+### 1. Component Architecture
+
+- Create reusable, composable UI components
+- Use consistent naming conventions
+- Separate business logic from UI components
+- Implement widget testing for all reusable components
+
+### 2. Performance Optimization
+
+- Use const constructors for immutable widgets
+- Implement efficient list views with pagination
+- Avoid deep widget trees that trigger excessive rebuilds
+- Apply caching for expensive computations
+
+### 3. Accessibility
+
+- Support high-contrast themes
+- Ensure minimum tap target size (48x48dp)
+- Include proper semantics for screen readers
+- Support dynamic text scaling
+
+### 4. State Management
+
+- Use Riverpod providers for state management
+- Separate UI state from business logic
+- Apply AsyncValue pattern for loading/error states
+- Implement state restoration for interrupted sessions
+
+### 5. UI Consistency
+
+- Follow Material Design 3 guidelines consistently
+- Maintain predictable behavior across similar components
+- Use standard patterns for common interactions
+
+- Ensure visual harmony across all screens

@@ -1,0 +1,839 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces proper implementation of Role-Based Access Control (RBAC) in the HR Connect application according to the defined role matrix
+globs: "**/auth*.dart,**/permission*.dart,**/role*.dart,**/access*.dart,**/security/*.dart"
+alwaysApply: false
+@rbacEnforcement
+---
+
+# Role-Based Access Control
+
+This rule provides guidance for implementing Role-Based Access Control (RBAC) in the HR Connect application. It focuses on enforcing the defined role matrix, ensuring proper permission checks at UI and service levels, and managing role inheritance correctly.
+
+## Core Principles
+
+1. The application has four distinct roles: Employee (E), Branch Manager (BM), Payroll Portal (PP), and HR Portal (HP)
+2. Branch Managers can only access data for their team members
+3. Role permissions must be enforced at UI, service, and data layers
+4. Permission checks must happen before any operation
+5. Role inheritance must follow the defined hierarchy (e.g., BM extends Employee)
+
+## Required Packages
+
+```yaml
+dependencies:
+  # State management
+  riverpod: ^2.6.1
+  flutter_riverpod: ^2.6.1
+  
+  # Storage
+  drift: ^2.26.1
+  flutter_secure_storage: ^9.2.4
+  
+  # Authentication
+  dart_jsonwebtoken: ^3.2.0
+  
+  # Utilities
+  dartz: ^0.10.1
+  freezed_annotation: ^2.2.0
+  json_annotation: ^4.8.1
+```
+
+## Role and Permission Implementation
+
+### Role Definition
+
+```dart
+/// Represents user roles in the system
+enum Role {
+  employee,    // Base role with minimal permissions
+  branchManager, // Extends employee with team management capabilities
+  payrollPortal, // Administrative role for payroll functions
+  hrPortal;    // System administration with full access
+  
+  /// Checks if this role is higher than or equal to the given role
+  bool hasAtLeastRole(Role role) {
+    return index >= role.index;
+  }
+  
+  /// Gets roles that this role inherits from
+  List<Role> getInheritedRoles() {
+    switch (this) {
+      case Role.employee:
+        return [];
+      case Role.branchManager:
+        return [Role.employee];
+      case Role.payrollPortal:
+        return [];
+      case Role.hrPortal:
+        return [];
+    }
+  }
+  
+  /// Gets all effective roles including inherited roles
+  List<Role> getAllEffectiveRoles() {
+    final roles = <Role>[this];
+    roles.addAll(getInheritedRoles());
+    return roles;
+  }
+  
+  /// Creates a role from a string representation
+  static Role fromString(String value) {
+    return Role.values.firstWhere(
+      (r) => r.toString() == 'Role.$value',
+      orElse: () => Role.employee,
+    );
+  }
+}
+```
+
+### Permission Definition
+
+```dart
+/// Represents a permission in the system
+class Permission {
+  final String id;
+  final String name;
+  final String description;
+  final PermissionCategory category;
+  
+  const Permission({
+    required this.id,
+    required this.name,
+    required this.description,
+    required this.category,
+  });
+  
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is Permission &&
+          runtimeType == other.runtimeType &&
+          id == other.id;
+  
+  @override
+  int get hashCode => id.hashCode;
+}
+
+/// Categories for permissions
+enum PermissionCategory {
+  employeeCore,
+  authentication,
+  device,
+  attendance,
+  request,
+  employment,
+  performance,
+  notification,
+  sync,
+  payroll,
+  system,
+  analytics,
+  announcement,
+}
+
+/// Defines all permissions in the system
+class Permissions {
+  // Employee Core Data
+  static const viewOwnCoreProfile = Permission(
+    id: 'core.view.own',
+    name: 'View Own Core Profile',
+    description: 'Ability to view own core profile data',
+    category: PermissionCategory.employeeCore,
+  );
+  
+  static const editOwnCoreProfile = Permission(
+    id: 'core.edit.own',
+    name: 'Edit Own Core Profile',
+    description: 'Ability to edit own core profile data',
+    category: PermissionCategory.employeeCore,
+  );
+  
+  static const viewTeamCoreProfiles = Permission(
+    id: 'core.view.team',
+    name: 'View Team Core Profiles',
+    description: 'Ability to view team members core profile data',
+    category: PermissionCategory.employeeCore,
+  );
+  
+  // Add all other permissions from the RBAC matrix here
+  // ...
+}
+```
+
+### Role-Permission Mapping
+
+```dart
+/// Maps roles to their assigned permissions
+class RolePermissionMatrix {
+  /// Gets all permissions for a specific role
+  static Set<Permission> getPermissionsForRole(Role role) {
+    final permissions = <Permission>{};
+    
+    // Add base permissions based on role
+    switch (role) {
+      case Role.employee:
+        permissions.addAll(_employeePermissions);
+        break;
+      case Role.branchManager:
+        permissions.addAll(_branchManagerPermissions);
+        break;
+      case Role.payrollPortal:
+        permissions.addAll(_payrollPortalPermissions);
+        break;
+      case Role.hrPortal:
+        permissions.addAll(_hrPortalPermissions);
+        break;
+    }
+    
+    // Add inherited permissions
+    for (final inheritedRole in role.getInheritedRoles()) {
+      permissions.addAll(getPermissionsForRole(inheritedRole));
+    }
+    
+    return permissions;
+  }
+  
+  // Employee permissions
+  static const _employeePermissions = {
+    Permissions.viewOwnCoreProfile,
+    Permissions.editOwnCoreProfile,
+    // Add all employee permissions here
+  };
+  
+  // Branch Manager permissions (without inherited permissions)
+  static const _branchManagerPermissions = {
+    Permissions.viewTeamCoreProfiles,
+    Permissions.editTeamCoreProfiles,
+    // Add all branch manager specific permissions here
+  };
+  
+  // Payroll Portal permissions
+  static const _payrollPortalPermissions = {
+    Permissions.viewTeamCoreProfiles,
+    Permissions.editTeamCoreProfiles,
+    Permissions.viewOrganizationWideEmployeeData,
+    // Add all payroll portal permissions here
+  };
+  
+  // HR Portal permissions
+  static const _hrPortalPermissions = {
+    Permissions.viewTeamCoreProfiles,
+    Permissions.editTeamCoreProfiles,
+    Permissions.createNewEmployeeCoreProfiles,
+    Permissions.deactivateEmployeeAccounts,
+    Permissions.viewOrganizationWideEmployeeData,
+    Permissions.manageBidirectionalManagerRelationships,
+    // Add all HR portal permissions here
+  };
+}
+```
+
+## Authorization Service Implementation
+
+```dart
+/// Service for checking user permissions
+class AuthorizationService {
+  final UserRepository _userRepository;
+  
+  AuthorizationService(this._userRepository);
+  
+  /// Checks if the current user has the given permission
+  Future<bool> hasPermission(Permission permission) async {
+    final currentUser = await _userRepository.getCurrentUser();
+    
+    if (currentUser == null) {
+      return false;
+    }
+    
+    // Get all effective roles for the user
+    final effectiveRoles = <Role>[];
+    for (final role in currentUser.roles) {
+      effectiveRoles.add(role);
+      effectiveRoles.addAll(role.getInheritedRoles());
+    }
+    
+    // Check if any of the user's roles have the required permission
+    for (final role in effectiveRoles) {
+      final permissions = RolePermissionMatrix.getPermissionsForRole(role);
+      if (permissions.contains(permission)) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /// Checks if the current user has all of the given permissions
+  Future<bool> hasAllPermissions(List<Permission> permissions) async {
+    for (final permission in permissions) {
+      final hasPermission = await this.hasPermission(permission);
+      if (!hasPermission) {
+        return false;
+      }
+    }
+    
+    return true;
+  }
+  
+  /// Checks if the current user has any of the given permissions
+  Future<bool> hasAnyPermission(List<Permission> permissions) async {
+    for (final permission in permissions) {
+      final hasPermission = await this.hasPermission(permission);
+      if (hasPermission) {
+        return true;
+      }
+    }
+    
+    return permissions.isEmpty ? true : false;
+  }
+  
+  /// Checks if the current user has access to the given resource
+  /// This adds a layer for checking resource-specific permissions
+  Future<bool> hasResourceAccess(
+    Resource resource,
+    ResourceAction action,
+  ) async {
+    final currentUser = await _userRepository.getCurrentUser();
+    
+    if (currentUser == null) {
+      return false;
+    }
+    
+    // First check if user has the permission for this action
+    final permission = _getPermissionForResourceAction(resource, action);
+    final hasRequiredPermission = await hasPermission(permission);
+    
+    if (!hasRequiredPermission) {
+      return false;
+    }
+    
+    // For branch managers, check resource ownership
+    if (currentUser.roles.contains(Role.branchManager) && 
+        !currentUser.roles.contains(Role.hrPortal) &&
+        !currentUser.roles.contains(Role.payrollPortal)) {
+      // Branch managers can only access resources of their team members
+      switch (resource.type) {
+        case ResourceType.employee:
+          return _isEmployeeInManagerTeam(
+            currentUser.id,
+            resource.id,
+          );
+        case ResourceType.attendance:
+        case ResourceType.leave:
+        case ResourceType.overtime:
+          // Get the employee ID for this resource
+          final employeeId = await _getEmployeeIdForResource(resource);
+          return _isEmployeeInManagerTeam(
+            currentUser.id,
+            employeeId,
+          );
+        default:
+          return true;
+      }
+    }
+    
+    // For employees, check if they own the resource
+    if (currentUser.roles.contains(Role.employee) && 
+        !currentUser.roles.contains(Role.branchManager) &&
+        !currentUser.roles.contains(Role.hrPortal) &&
+        !currentUser.roles.contains(Role.payrollPortal)) {
+      // Employees can only access their own resources
+      switch (resource.type) {
+        case ResourceType.employee:
+          return resource.id == currentUser.id;
+        case ResourceType.attendance:
+        case ResourceType.leave:
+        case ResourceType.overtime:
+          final employeeId = await _getEmployeeIdForResource(resource);
+          return employeeId == currentUser.id;
+        default:
+          return true;
+      }
+    }
+    
+    // Payroll Portal and HR Portal have access based only on permissions
+    return true;
+  }
+  
+  /// Checks if an employee is in a manager's team
+  Future<bool> _isEmployeeInManagerTeam(
+    String managerId,
+    String employeeId,
+  ) async {
+    return _userRepository.isEmployeeInManagerTeam(managerId, employeeId);
+  }
+  
+  /// Gets the employee ID for a resource
+  Future<String> _getEmployeeIdForResource(Resource resource) async {
+    // Implementation depends on resource type
+    throw UnimplementedError();
+  }
+  
+  /// Maps resource action to required permission
+  Permission _getPermissionForResourceAction(
+    Resource resource,
+    ResourceAction action,
+  ) {
+    // Map resource+action to specific permission
+    throw UnimplementedError();
+  }
+}
+
+/// Represents a resource in the system
+class Resource {
+  final String id;
+  final ResourceType type;
+  
+  const Resource({
+    required this.id,
+    required this.type,
+  });
+}
+
+/// Types of resources that can be accessed
+enum ResourceType {
+  employee,
+  attendance,
+  leave,
+  overtime,
+  device,
+  performance,
+  notification,
+  payroll,
+  system,
+}
+
+/// Actions that can be performed on resources
+enum ResourceAction {
+  view,
+  create,
+  update,
+  delete,
+  approve,
+}
+```
+
+## UI Integration with RBAC
+
+### Permission-Aware UI Component
+
+```dart
+/// A widget that only renders its child if the user has the required permission
+class PermissionGate extends ConsumerWidget {
+  final Permission permission;
+  final Widget child;
+  final Widget? placeholder;
+  
+  const PermissionGate({
+    Key? key,
+    required this.permission,
+    required this.child,
+    this.placeholder,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasPermissionAsync = ref.watch(hasPermissionProvider(permission));
+    
+    return hasPermissionAsync.when(
+      data: (hasPermission) {
+        if (hasPermission) {
+          return child;
+        } else {
+          return placeholder ?? SizedBox.shrink();
+        }
+      },
+      loading: () => placeholder ?? Center(child: CircularProgressIndicator()),
+      error: (_, __) => placeholder ?? SizedBox.shrink(),
+    );
+  }
+}
+
+/// Provider to check if user has a specific permission
+final hasPermissionProvider = FutureProvider.family<bool, Permission>(
+  (ref, permission) async {
+    final authService = ref.watch(authorizationServiceProvider);
+    return authService.hasPermission(permission);
+  },
+);
+
+/// Provider for the authorization service
+final authorizationServiceProvider = Provider<AuthorizationService>(
+  (ref) {
+    final userRepository = ref.watch(userRepositoryProvider);
+    return AuthorizationService(userRepository);
+  },
+);
+```
+
+### Permission-Aware Route Guard
+
+```dart
+/// A route guard that checks for required permissions
+class PermissionRouteGuard extends ConsumerWidget {
+  final Permission permission;
+  final Widget child;
+  final Widget? unauthorizedPage;
+  
+  const PermissionRouteGuard({
+    Key? key,
+    required this.permission,
+    required this.child,
+    this.unauthorizedPage,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final hasPermissionAsync = ref.watch(hasPermissionProvider(permission));
+    
+    return hasPermissionAsync.when(
+      data: (hasPermission) {
+        if (hasPermission) {
+          return child;
+        } else {
+          if (unauthorizedPage != null) {
+            return unauthorizedPage!;
+          } else {
+            // Navigate to access denied page
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              Navigator.of(context).pushReplacementNamed('/access-denied');
+            });
+            return Center(child: CircularProgressIndicator());
+          }
+        }
+      },
+      loading: () => Center(child: CircularProgressIndicator()),
+      error: (_, __) {
+        // Navigate to access denied page
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          Navigator.of(context).pushReplacementNamed('/access-denied');
+        });
+        return Center(child: CircularProgressIndicator());
+      },
+    );
+  }
+}
+```
+
+## JWT Implementation with Roles
+
+```dart
+/// Class for working with JWT tokens that contain role information
+class RoleBasedJwtService {
+  final String secretKey;
+  
+  RoleBasedJwtService({required this.secretKey});
+  
+  /// Generates a JWT token with user roles
+  String generateToken(User user) {
+    final jwt = JWT(
+      {
+        'sub': user.id,
+        'name': user.name,
+        'roles': user.roles.map((r) => r.toString().split('.').last).toList(),
+        'exp': DateTime.now().add(Duration(hours: 8)).millisecondsSinceEpoch ~/ 1000,
+      },
+    );
+    
+    return jwt.sign(SecretKey(secretKey));
+  }
+  
+  /// Verifies and decodes a JWT token
+  Map<String, dynamic> verifyToken(String token) {
+    try {
+      final jwt = JWT.verify(token, SecretKey(secretKey));
+      return jwt.payload;
+    } on JWTExpiredError {
+      throw AuthException('Token expired');
+    } on JWTError catch (e) {
+      throw AuthException('Invalid token: ${e.message}');
+    }
+  }
+  
+  /// Extracts user roles from a JWT token
+  List<Role> extractRoles(String token) {
+    final payload = verifyToken(token);
+    final roleStrings = List<String>.from(payload['roles'] ?? []);
+    
+    return roleStrings.map((r) => Role.fromString(r)).toList();
+  }
+}
+```
+
+## Service Layer Integration
+
+```dart
+/// Base class for services with permission checks
+abstract class PermissionAwareService {
+  final AuthorizationService _authorizationService;
+  
+  PermissionAwareService(this._authorizationService);
+  
+  /// Executes an operation if the user has the required permission
+  Future<Either<PermissionDeniedFailure, T>> executeWithPermission<T>({
+    required Permission permission,
+    required Future<T> Function() operation,
+  }) async {
+    final hasPermission = await _authorizationService.hasPermission(permission);
+    
+    if (hasPermission) {
+      final result = await operation();
+      return Right(result);
+    } else {
+      return Left(PermissionDeniedFailure(
+        message: 'Operation requires permission: ${permission.name}',
+      ));
+    }
+  }
+  
+  /// Executes a resource operation with permission and ownership check
+  Future<Either<PermissionDeniedFailure, T>> executeWithResourceAccess<T>({
+    required Resource resource,
+    required ResourceAction action,
+    required Future<T> Function() operation,
+  }) async {
+    final hasAccess = await _authorizationService.hasResourceAccess(
+      resource,
+      action,
+    );
+    
+    if (hasAccess) {
+      final result = await operation();
+      return Right(result);
+    } else {
+      return Left(PermissionDeniedFailure(
+        message: 'Operation requires access to resource: ${resource.type}',
+      ));
+    }
+  }
+}
+
+/// Employee service with permission checks
+class EmployeeService extends PermissionAwareService {
+  final EmployeeRepository _employeeRepository;
+  
+  EmployeeService(
+    AuthorizationService authorizationService,
+    this._employeeRepository,
+  ) : super(authorizationService);
+  
+  /// Gets an employee by ID with permission check
+  Future<Either<Failure, Employee>> getEmployeeById(String id) async {
+    final resource = Resource(id: id, type: ResourceType.employee);
+    
+    return executeWithResourceAccess(
+      resource: resource,
+      action: ResourceAction.view,
+      operation: () => _employeeRepository.getById(id),
+    );
+  }
+  
+  /// Updates an employee with permission check
+  Future<Either<Failure, Unit>> updateEmployee(Employee employee) async {
+    final resource = Resource(id: employee.id, type: ResourceType.employee);
+    
+    return executeWithResourceAccess(
+      resource: resource,
+      action: ResourceAction.update,
+      operation: () => _employeeRepository.update(employee),
+    );
+  }
+  
+  /// Creates a new employee with permission check
+  Future<Either<Failure, Employee>> createEmployee(Employee employee) async {
+    return executeWithPermission(
+      permission: Permissions.createNewEmployeeCoreProfiles,
+      operation: () => _employeeRepository.create(employee),
+    );
+  }
+}
+```
+
+## Business Rules for RBAC Implementation
+
+1. **Role Hierarchy and Inheritance**
+   - Branch Manager inherits all Employee permissions
+   - Payroll Portal and HR Portal do not inherit from any role
+   - When checking permissions, all inherited permissions must be considered
+
+2. **Team Access Control**
+   - Branch Managers should only access data of employees in their team
+   - Team membership must be validated for any resource access
+   - For resource-specific operations, employee ownership must be traced
+
+3. **Permission Enforcement**
+   - Permissions must be checked at the UI, service, and data levels
+   - UI elements should be hidden if the user lacks permission to access them
+   - Routes should redirect to access denied page for unauthorized access
+   - Services should validate permissions before performing operations
+
+4. **Token Management**
+   - JWT tokens must include role information
+   - Role information must be cryptographically protected
+   - Tokens should have a maximum validity of 8 hours
+   - Role changes should invalidate existing tokens
+
+5. **Security Constraints**
+   - Role assignments must be stored securely
+   - Role-based validation must occur on both client and server side
+   - Permission checks must not be bypassable via API calls
+   - Administrative operations must be logged in audit trails
+
+## Testing Approach
+
+```dart
+void main() {
+  group('Authorization Service', () {
+    late MockUserRepository mockUserRepository;
+    late AuthorizationService authorizationService;
+    
+    setUp(() {
+      mockUserRepository = MockUserRepository();
+      authorizationService = AuthorizationService(mockUserRepository);
+    });
+    
+    test('Employee should have permission to view own profile', () async {
+      // Arrange
+      final employee = User(
+        id: '123',
+        name: 'John Doe',
+        roles: [Role.employee],
+      );
+      
+      when(mockUserRepository.getCurrentUser())
+          .thenAnswer((_) async => employee);
+      
+      // Act
+      final hasPermission = await authorizationService.hasPermission(
+        Permissions.viewOwnCoreProfile,
+      );
+      
+      // Assert
+      expect(hasPermission, true);
+    });
+    
+    test('Employee should NOT have permission to view team profiles', () async {
+      // Arrange
+      final employee = User(
+        id: '123',
+        name: 'John Doe',
+        roles: [Role.employee],
+      );
+      
+      when(mockUserRepository.getCurrentUser())
+          .thenAnswer((_) async => employee);
+      
+      // Act
+      final hasPermission = await authorizationService.hasPermission(
+        Permissions.viewTeamCoreProfiles,
+      );
+      
+      // Assert
+      expect(hasPermission, false);
+    });
+    
+    test('Branch Manager should have inherited employee permissions', () async {
+      // Arrange
+      final branchManager = User(
+        id: '123',
+        name: 'Jane Smith',
+        roles: [Role.branchManager],
+      );
+      
+      when(mockUserRepository.getCurrentUser())
+          .thenAnswer((_) async => branchManager);
+      
+      // Act
+      final hasEmployeePermission = await authorizationService.hasPermission(
+        Permissions.viewOwnCoreProfile,
+      );
+      
+      // Assert
+      expect(hasEmployeePermission, true);
+    });
+    
+    test('Branch Manager cannot access employee outside their team', () async {
+      // Arrange
+      final branchManager = User(
+        id: '123',
+        name: 'Jane Smith',
+        roles: [Role.branchManager],
+      );
+      
+      when(mockUserRepository.getCurrentUser())
+          .thenAnswer((_) async => branchManager);
+      
+      when(mockUserRepository.isEmployeeInManagerTeam('123', '456'))
+          .thenAnswer((_) async => false);
+      
+      // Act
+      final hasAccess = await authorizationService.hasResourceAccess(
+        Resource(id: '456', type: ResourceType.employee),
+        ResourceAction.view,
+      );
+      
+      // Assert
+      expect(hasAccess, false);
+    });
+    
+    test('HR Portal has organization-wide access', () async {
+      // Arrange
+      final hrAdmin = User(
+        id: '123',
+        name: 'Admin User',
+        roles: [Role.hrPortal],
+      );
+      
+      when(mockUserRepository.getCurrentUser())
+          .thenAnswer((_) async => hrAdmin);
+      
+      // Act
+      final hasAccess = await authorizationService.hasResourceAccess(
+        Resource(id: '789', type: ResourceType.employee),
+        ResourceAction.view,
+      );
+      
+      // Assert
+      expect(hasAccess, true);
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Declarative Permission Checks**
+   - Use declarative widgets for UI permission control
+   - Prefer composition over inheritance for permission-aware components
+   - Wrap route access with permission guards
+   - Keep permission checks consistent across the application
+
+2. **Performance Optimization**
+   - Cache permission checks during the user session
+   - Use efficient data structures for permission lookups
+   - Batch permission checks where possible
+   - Avoid redundant checks in deeply nested widgets
+
+3. **Separation of Concerns**
+   - Keep permission logic separate from business logic
+   - Use functional error handling (Either type) for permission failures
+   - Create reusable permission hooks or providers
+   - Implement a consistent pattern for service-level checks
+
+4. **Role Implementation**
+   - Use enum-based roles for compile-time safety
+   - Implement proper role hierarchy and inheritance
+   - Make role comparison and privilege escalation checks explicit
+   - Ensure role-to-permission mapping is maintainable
+
+5. **Security Considerations**
+   - Validate permissions on both client and server side
+   - Implement proper logging for authorization decisions
+   - Use secure storage for role and permission data
+
+   - Consider implementing time-based and operation-based permission grants

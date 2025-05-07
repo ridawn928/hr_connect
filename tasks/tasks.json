@@ -1,0 +1,1665 @@
+{
+  "tasks": [
+    {
+      "id": 1,
+      "title": "Project Setup and Architecture Foundation",
+      "description": "Initialize the Flutter project with the required dependencies and establish the Modified Vertical Slice Architecture (MVSA) foundation.",
+      "status": "done",
+      "dependencies": [],
+      "priority": "high",
+      "details": "Create a new Flutter 3.29+ project with Dart 3.7+. Set up the project structure following the MVSA pattern with core and features directories. Configure the pubspec.yaml with all required dependencies from section 8. Implement the dependency injection system using get_it and injectable. Set up the basic routing system and application entry points. Create the architectural blueprint documentation for the team.",
+      "testStrategy": "Verify project structure matches MVSA requirements. Ensure all dependencies are correctly configured and can be imported. Create basic widget tests to verify the application can run. Implement CI pipeline for automated testing.",
+      "subtasks": [
+        {
+          "id": "01-001-01",
+          "title": "Create a new Flutter project using Flutter 3.29+ and Dart 3.7+.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-001-02",
+          "title": "Configure the pubspec.yaml with all required dependencies (see PRD section 8).",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-001-03",
+          "title": "Run flutter pub get to install dependencies and verify the project builds.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-001-04",
+          "title": "Set up version control (e.g., initialize Git repository, add .gitignore).",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-001-05",
+          "title": "Validate initial project setup by running a simple basic widget counter app test.",
+          "description": "Create a test file (e.g., test/widget_test.dart) that runs the default Flutter counter app test. Ensure the test passes, confirming the project and dependencies are set up correctly.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-002-01",
+          "title": "Create lib/core/ for shared utilities, constants, and base classes.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-002-02",
+          "title": "Create lib/features/ for feature-specific modules.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-002-03",
+          "title": "Within each feature folder, add subfolders for presentation, domain, and data layers.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-002-04",
+          "title": "Add placeholder files (e.g., .gitkeep) in each directory to maintain structure in version control.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-002-05",
+          "title": "Write and place README files in each major directory explaining its purpose.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-003-01",
+          "title": "Create a core/di/ directory for dependency injection configuration.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-003-02",
+          "title": "Implement the service locator using get_it.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-003-03",
+          "title": "Integrate injectable and set up the initial injection configuration file with @InjectableInit.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-003-04",
+          "title": "Set up build.yaml and run build_runner to generate DI code.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-003-05",
+          "title": "Create and test a simple service to verify the DI system works.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-004-01",
+          "title": "Create a core/routing/ directory for routing logic.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-004-02",
+          "title": "Define the AppRouter class using auto_route or go_router.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-004-03",
+          "title": "Set up initial route definitions with placeholder screens.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-004-04",
+          "title": "Implement navigation helpers and extension methods.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-004-05",
+          "title": "Test routing by navigating between the home screen and a test screen.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-005-01",
+          "title": "Implement the main.dart file with proper initialization sequence (DI setup, app config, initial routing).",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-005-02",
+          "title": "Create the MyApp widget as the root of the application.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-005-03",
+          "title": "Develop comprehensive architecture documentation in markdown format (MVSA pattern, folder structure, DI, state management, coding standards).",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-005-04",
+          "title": "Place documentation in a /docs folder at the project root.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "01-005-05",
+          "title": "Review and validate documentation for completeness and clarity.",
+          "status": "done",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Core Infrastructure Implementation",
+      "description": "Implement the core shared infrastructure including local storage, network layer, and security foundation.",
+      "status": "pending",
+      "dependencies": [
+        1
+      ],
+      "priority": "high",
+      "details": "Set up Flutter Data with Drift for local storage. Configure Firebase integration for cloud synchronization. Implement the repository pattern for data access abstraction. Create the network layer with Dio including interceptors for authentication and error handling. Implement the security foundation with JWT handling, secure storage, and encryption utilities. Set up the error handling system using the Either type pattern from Dartz.",
+      "testStrategy": "Write unit tests for repository implementations with mocked data sources. Test local storage operations with sample data. Verify encryption and decryption functionality. Test network layer with mock responses. Validate error handling across different scenarios.",
+      "subtasks": [
+        {
+          "id": "02-001-01",
+          "title": "Define database models and schema for core entities.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-001-02",
+          "title": "Configure Drift database with tables and relationships.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-001-03",
+          "title": "Set up Flutter Data adapters to work with Drift.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-001-04",
+          "title": "Implement migration strategies for schema updates.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-001-05",
+          "title": "Add and run unit tests to verify storage operations.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-002-01",
+          "title": "Define repository interfaces for each domain entity.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-002-02",
+          "title": "Implement concrete repository classes using the local storage layer.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-002-03",
+          "title": "Add caching strategies and pagination support.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-002-04",
+          "title": "Create a repository factory for dependency injection.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-002-05",
+          "title": "Write and run unit tests for repository implementations.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-003-01",
+          "title": "Configure Dio client with base URL and default headers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-003-02",
+          "title": "Implement authentication, logging, and error handling interceptors.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-003-03",
+          "title": "Add retry logic for failed requests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-003-04",
+          "title": "Create API service classes for different endpoints.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-003-05",
+          "title": "Write and run unit tests with mocked HTTP responses.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-004-01",
+          "title": "Implement JWT token parsing, validation, and refresh mechanisms.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-004-02",
+          "title": "Set up secure storage for sensitive data using flutter_secure_storage.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-004-03",
+          "title": "Create encryption utilities for sensitive data.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-004-04",
+          "title": "Integrate biometric authentication where needed.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-004-05",
+          "title": "Write and run unit tests for security components.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-005-01",
+          "title": "Configure Firebase core, Firestore, and Authentication services.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-005-02",
+          "title": "Implement data synchronization between local storage and Firestore.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-005-03",
+          "title": "Set up Firebase Cloud Messaging for notifications.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-005-04",
+          "title": "Implement application-wide error handling using the Either type pattern.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "02-005-05",
+          "title": "Add integration tests for Firebase synchronization and error handling.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "Authentication and Device Management",
+      "description": "Implement the authentication system and device management capabilities.",
+      "status": "pending",
+      "dependencies": [
+        2
+      ],
+      "priority": "high",
+      "details": "Create the AuthenticationProfile aggregate with JWT-based authentication. Implement login, logout, and token refresh mechanisms. Set up Firebase Authentication integration for optional social login. Develop the DeviceProfile aggregate for device registration and verification. Implement the device limitation logic (max 2 devices per employee). Create the UI components for authentication flows including login, password reset, and device registration screens.",
+      "testStrategy": "Test authentication flows with mock credentials. Verify token refresh mechanism works correctly. Test device registration and verification process. Implement widget tests for authentication UI components. Validate security constraints like session timeout after 8 hours of inactivity.",
+      "subtasks": [
+        {
+          "id": "03-001-01",
+          "title": "Design the AuthenticationProfile aggregate with domain entities and value objects.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-001-02",
+          "title": "Implement JWT token generation and validation services.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-001-03",
+          "title": "Create the authentication service with methods for token creation, validation, and user identity management.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-001-04",
+          "title": "Set up the database schema for storing authentication profiles.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-001-05",
+          "title": "Write and run unit tests for the authentication logic.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-002-01",
+          "title": "Create API endpoints for login, logout, and token refresh.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-002-02",
+          "title": "Implement error handling and validation for authentication requests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-002-03",
+          "title": "Set up secure token storage and transmission.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-002-04",
+          "title": "Develop the token refresh mechanism and session invalidation for logout.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-002-05",
+          "title": "Add security measures and write integration tests for authentication flows.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-003-01",
+          "title": "Configure Firebase Authentication in the application.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-003-02",
+          "title": "Implement OAuth flows for popular social providers (Google, Facebook, etc.).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-003-03",
+          "title": "Create adapter services to translate Firebase authentication responses to application tokens.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-003-04",
+          "title": "Implement user profile synchronization between Firebase and the application.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-003-05",
+          "title": "Add error handling and write tests for social authentication.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-004-01",
+          "title": "Design the DeviceProfile aggregate with domain entities and repositories.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-004-02",
+          "title": "Implement device registration and verification services.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-004-03",
+          "title": "Enforce the business logic for a maximum of 2 devices per employee.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-004-04",
+          "title": "Develop APIs for device registration, verification, and management.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-004-05",
+          "title": "Add functionality to revoke access for specific devices and write tests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-005-01",
+          "title": "Design and implement UI components for login, registration, and password reset screens.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-005-02",
+          "title": "Create device registration and management interfaces.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-005-03",
+          "title": "Implement form validation and error handling in the UI.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-005-04",
+          "title": "Develop responsive layouts and loading states for authentication actions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "03-005-05",
+          "title": "Add accessibility features and create end-to-end tests for authentication flows.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "QR Code Attendance System",
+      "description": "Implement the QR code generation and scanning functionality for attendance tracking.",
+      "status": "pending",
+      "dependencies": [
+        3
+      ],
+      "priority": "high",
+      "details": "Integrate Mobile Scanner for QR code reading and QR Flutter for code generation. Implement time-based QR codes with embedded timestamps and digital signatures. Create the validation logic for QR codes with configurable time windows (15 minutes default). Develop the AttendanceProfile aggregate for storing attendance records. Implement status classification (ON_TIME, LATE, etc.) with configurable grace periods. Create UI components for QR code scanning and display.",
+      "testStrategy": "Test QR code generation with various parameters. Verify QR code validation logic with different timestamps. Test offline validation capabilities. Create widget tests for QR scanning UI. Validate security measures including nonce tracking to prevent replay attacks.",
+      "subtasks": [
+        {
+          "id": "04-001-01",
+          "title": "Integrate the QR Flutter package for QR code generation.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-001-02",
+          "title": "Implement a service to generate QR codes with unique session identifiers, timestamps, and digital signatures.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-001-03",
+          "title": "Add logic to periodically regenerate QR codes (e.g., every minute).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-001-04",
+          "title": "Provide configuration options for QR code size, error correction, and content formatting.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-001-05",
+          "title": "Write and run unit tests to verify QR code generation and security features.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-002-01",
+          "title": "Integrate the Mobile Scanner package for QR code scanning.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-002-02",
+          "title": "Implement camera permission handling and error management.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-002-03",
+          "title": "Develop the scanner UI component with visual guides and feedback.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-002-04",
+          "title": "Handle error scenarios (denied permissions, unrecognized QR codes, etc.).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-002-05",
+          "title": "Write and run tests for scanner integration and error handling.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-003-01",
+          "title": "Implement backend logic to validate digital signatures and timestamps in scanned QR codes.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-003-02",
+          "title": "Add configurable time window validation (default 15 minutes).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-003-03",
+          "title": "Implement security measures to prevent replay attacks (nonce tracking).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-003-04",
+          "title": "Create error responses for invalid, expired, or tampered QR codes.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-003-05",
+          "title": "Add logging for security audits and write tests for validation logic.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-004-01",
+          "title": "Design the AttendanceProfile aggregate with user info, timestamps, and session details.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-004-02",
+          "title": "Implement database operations (create, read, update) for attendance records.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-004-03",
+          "title": "Create indexes for efficient querying by user, session, date, and status.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-004-04",
+          "title": "Add data validation to ensure integrity of attendance records.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-004-05",
+          "title": "Write and run unit tests for attendance data management.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-005-01",
+          "title": "Implement logic to classify attendance as ON_TIME, LATE, etc., based on grace periods and expected times.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-005-02",
+          "title": "Create UI components for displaying QR codes and auto-refresh functionality.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-005-03",
+          "title": "Develop the scanner interface with real-time feedback on scan status.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-005-04",
+          "title": "Build attendance summary views with status distributions and individual records.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "04-005-05",
+          "title": "Implement filtering and sorting options for attendance records and write UI tests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Employee Profile Management",
+      "description": "Implement the employee profile management system with all related aggregates.",
+      "status": "pending",
+      "dependencies": [
+        2
+      ],
+      "priority": "medium",
+      "details": "Create the Employee entity as the primary aggregate root. Implement the EmploymentProfile for job details and organizational placement. Develop the PerformanceProfile for goals, KPIs, and reviews. Create the UI components for profile viewing and editing. Implement document upload and management with Firebase Storage. Add profile image handling with caching. Ensure all sensitive employee data is encrypted at rest.",
+      "testStrategy": "Test entity creation and validation rules for all profile aggregates. Verify data persistence and retrieval. Test document upload and download functionality. Create widget tests for profile UI components. Validate field-level encryption for sensitive information.",
+      "subtasks": [
+        {
+          "id": "05-001-01",
+          "title": "Define the Employee entity schema and core fields (name, contact, employee ID).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-001-02",
+          "title": "Implement the EmploymentProfile aggregate (job title, department, reporting structure).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-001-03",
+          "title": "Set up domain events for state changes (hire, promotion, termination).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-001-04",
+          "title": "Create repository interfaces and concrete implementations for Employee and EmploymentProfile.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-001-05",
+          "title": "Add encryption for sensitive data fields (e.g., compensation).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-002-01",
+          "title": "Design the PerformanceProfile aggregate structure (goals, KPIs, reviews).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-002-02",
+          "title": "Implement goal-setting and progress tracking logic.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-002-03",
+          "title": "Add performance review cycles and feedback mechanisms.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-002-04",
+          "title": "Create repository interfaces and implementations for PerformanceProfile.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-002-05",
+          "title": "Integrate domain events for significant performance changes.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-003-01",
+          "title": "Integrate Firebase Storage SDK and configure access.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-003-02",
+          "title": "Implement document upload service with progress tracking and error handling.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-003-03",
+          "title": "Create document metadata storage linked to employee profiles.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-003-04",
+          "title": "Implement secure document retrieval and access controls.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-003-05",
+          "title": "Add document categorization and versioning features.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-004-01",
+          "title": "Create image upload component with preview and cropping.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-004-02",
+          "title": "Implement server-side image processing for multiple resolutions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-004-03",
+          "title": "Set up caching mechanism for profile images.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-004-04",
+          "title": "Implement lazy loading and fallback avatar system.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-004-05",
+          "title": "Store image metadata in the Employee aggregate.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-005-01",
+          "title": "Develop responsive profile view component with tabs for sections.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-005-02",
+          "title": "Implement edit forms with validation for all profile sections.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-005-03",
+          "title": "Add role-based access control for sensitive information.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-005-04",
+          "title": "Implement data encryption service for sensitive employee data at rest.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "05-005-05",
+          "title": "Integrate document management and performance profile visualization components.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Time Management Features",
+      "description": "Implement the comprehensive time management system including leave management and requests.",
+      "status": "pending",
+      "dependencies": [
+        4,
+        5
+      ],
+      "priority": "medium",
+      "details": "Create the RequestProfile aggregate for leave, overtime, and other requests. Implement leave management with different types (emergency, personal, sick, vacation, etc.). Develop approval workflows with escalation for disapproved requests. Implement overtime request processing with configurable limits. Create UI components for leave requests, approval interfaces, and team schedule visualization. Implement time-based business rules (24h emergency leave, 30-day personal leave).",
+      "testStrategy": "Test leave request creation and validation. Verify approval workflows function correctly. Test business rule enforcement for different leave types. Create widget tests for time management UI components. Validate offline capabilities for leave requests.",
+      "subtasks": [
+        {
+          "id": "06-001-01",
+          "title": "Design the RequestProfile domain model with core properties (requestId, employeeId, requestDate, status, approvalChain).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-001-02",
+          "title": "Define enums for request types (LEAVE, OVERTIME, OTHER) and status values (PENDING, APPROVED, REJECTED, ESCALATED).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-001-03",
+          "title": "Implement validation rules and state transition logic for requests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-001-04",
+          "title": "Create repository interfaces and implementations for RequestProfile persistence.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-001-05",
+          "title": "Write unit tests for RequestProfile creation, validation, and state transitions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-002-01",
+          "title": "Extend RequestProfile to support leave-specific attributes (type, duration, reason).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-002-02",
+          "title": "Implement different leave types (emergency, personal, sick, vacation) with validation rules.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-002-03",
+          "title": "Create services for leave balance calculations and availability checks.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-002-04",
+          "title": "Implement business rules (24h emergency leave, 30-day advance notice for personal leave).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-002-05",
+          "title": "Build repository methods and unit tests for leave history and balances.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-003-01",
+          "title": "Create ApprovalWorkflow service to manage approval chains for requests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-003-02",
+          "title": "Implement notification mechanisms for pending approvals.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-003-03",
+          "title": "Build escalation logic for disapproved requests (automatic routing to higher management).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-003-04",
+          "title": "Implement approval delegation for unavailable managers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-003-05",
+          "title": "Write unit tests for workflow scenarios and event handlers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-004-01",
+          "title": "Extend RequestProfile with overtime-specific attributes (requested hours, justification, project reference).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-004-02",
+          "title": "Implement configurable overtime limits based on role, department, and time period.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-004-03",
+          "title": "Create validation services for overtime eligibility and company policy compliance.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-004-04",
+          "title": "Develop calculation logic for overtime compensation (pay or time-off).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-004-05",
+          "title": "Build repository methods and unit tests for overtime reporting and analytics.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-005-01",
+          "title": "Design UI components for submitting leave requests (type selection, date range pickers).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-005-02",
+          "title": "Create approval interface for managers (review, approve/reject, comment).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-005-03",
+          "title": "Develop team schedule visualization (approved time-off, overtime).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-005-04",
+          "title": "Implement employee dashboard (leave balances, request history, status tracking).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "06-005-05",
+          "title": "Build notification components and responsive layouts for desktop/mobile.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "Administrative Portals",
+      "description": "Implement the Payroll Portal and HR Portal with role-based access control.",
+      "status": "pending",
+      "dependencies": [
+        5,
+        6
+      ],
+      "priority": "medium",
+      "details": "Create the Payroll Portal with QR generation, attendance management, and payroll processing capabilities. Implement the HR Portal for system administration and policy configuration. Develop the role-based permission system with Employee, Branch Manager, Payroll Portal, and HR Portal roles. Implement company structure management. Create UI components for administrative interfaces including data tables and charts. Add multi-factor authentication for admin accounts.",
+      "testStrategy": "Test role-based access controls with different user types. Verify administrative functions work correctly. Test permission-based UI adaptation. Create widget tests for administrative UI components. Validate security measures for administrative actions including audit trails.",
+      "subtasks": [
+        {
+          "id": "07-001-01",
+          "title": "Design the permission management system and define the four roles (Employee, Branch Manager, Payroll Portal, HR Portal).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-001-02",
+          "title": "Implement role assignment functionality and role hierarchy logic.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-001-03",
+          "title": "Create database tables for roles, permissions, and user-role assignments.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-001-04",
+          "title": "Develop API endpoints for role management and permission verification.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-001-05",
+          "title": "Write unit tests to verify permission logic and role enforcement.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-002-01",
+          "title": "Create database models for departments, branches, positions, and reporting relationships.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-002-02",
+          "title": "Implement CRUD operations for managing organizational units.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-002-03",
+          "title": "Design and implement UI components for visualizing and editing the company structure.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-002-04",
+          "title": "Add validation rules to ensure structural integrity.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-002-05",
+          "title": "Integrate with the RBAC system to enforce permissions for structure management.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-003-01",
+          "title": "Create the QR code generation system for employee attendance tracking.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-003-02",
+          "title": "Implement attendance record management with clock-in/clock-out functionality.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-003-03",
+          "title": "Build the payroll calculation engine (process attendance data, apply policies, generate payment records).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-003-04",
+          "title": "Design database schemas and API endpoints for attendance and payroll data.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-003-05",
+          "title": "Implement basic reporting functionality for payroll data.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-004-01",
+          "title": "Develop the HR Portal interface with policy management tools.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-004-02",
+          "title": "Implement system configuration screens for company-wide settings.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-004-03",
+          "title": "Create administrative dashboards with data visualization components (tables, charts, graphs).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-004-04",
+          "title": "Build user management interfaces for HR administrators.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-004-05",
+          "title": "Add audit logging for administrative actions and ensure all components respect RBAC permissions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-005-01",
+          "title": "Research and select an appropriate MFA solution.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-005-02",
+          "title": "Implement MFA enrollment and verification workflows.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-005-03",
+          "title": "Create backup code generation for account recovery.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-005-04",
+          "title": "Add MFA status indicators in the user interface and implement security policies for MFA requirements.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "07-005-05",
+          "title": "Create admin tools to manage MFA settings and provide documentation for administrators.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Offline Capabilities and Synchronization",
+      "description": "Enhance the offline-first approach with robust synchronization mechanisms.",
+      "status": "pending",
+      "dependencies": [
+        2,
+        4,
+        6
+      ],
+      "priority": "high",
+      "details": "Implement background synchronization with WorkManager. Create conflict detection and resolution mechanisms using operational transforms. Develop a prioritized sync queue with business importance ordering. Implement the SyncProfile aggregate for tracking synchronization status. Add clear offline status indicators in the UI. Ensure all features function completely offline within the 7-day limit. Implement high-priority sync for attendance records.",
+      "testStrategy": "Test offline functionality across all features. Verify synchronization works correctly after connectivity is restored. Test conflict resolution with predefined conflict scenarios. Validate background sync efficiency and battery impact. Test the system behavior at the 7-day offline limit.",
+      "subtasks": [
+        {
+          "id": "08-001-01",
+          "title": "Set up the WorkManager framework for periodic and event-based background sync.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-001-02",
+          "title": "Define work constraints (network, battery, device idle) for sync jobs.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-001-03",
+          "title": "Implement the SyncWorker class to execute sync operations.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-001-04",
+          "title": "Set up retry policies and backoff strategies for failed sync attempts.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-001-05",
+          "title": "Create a SyncScheduler service to manage sync frequency and triggers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-002-01",
+          "title": "Design the SyncProfile aggregate to track sync status per entity and user.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-002-02",
+          "title": "Implement a prioritized sync queue with business importance ordering.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-002-03",
+          "title": "Develop database entities and repositories for sync tracking.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-002-04",
+          "title": "Implement queue management logic (insertion, removal, reordering).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-002-05",
+          "title": "Add support for high-priority sync for critical data (e.g., attendance records).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-003-01",
+          "title": "Implement operational transforms for conflict resolution.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-003-02",
+          "title": "Create version vectors or timestamps for change tracking.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-003-03",
+          "title": "Develop conflict detection algorithms (local vs. remote).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-003-04",
+          "title": "Implement automatic and manual resolution strategies.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-003-05",
+          "title": "Add logging and analytics for conflict patterns and outcomes.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-004-01",
+          "title": "Audit all app features for offline dependencies and requirements.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-004-02",
+          "title": "Implement local caching for all required remote resources.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-004-03",
+          "title": "Create offline-compatible versions of network-dependent operations.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-004-04",
+          "title": "Implement data expiration and refresh policies.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-004-05",
+          "title": "Develop comprehensive tests for offline scenarios and edge cases.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-005-01",
+          "title": "Design and implement offline status indicators in the app UI.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-005-02",
+          "title": "Create a sync status dashboard showing pending changes and progress.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-005-03",
+          "title": "Add progress indicators and toast notifications for sync events.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-005-04",
+          "title": "Implement visual differentiation for offline-created content and warning indicators for 7-day offline limit.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "08-005-05",
+          "title": "Add educational UI elements to help users understand offline capabilities.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "UI/UX Implementation with Material Design 3",
+      "description": "Implement the user interface following Material Design 3 guidelines with responsive layouts.",
+      "status": "pending",
+      "dependencies": [
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "priority": "medium",
+      "details": "Implement Material Design 3 components throughout the application. Create responsive layouts for mobile, tablet, and desktop. Add offline status indicators in the UI. Implement permission-aware UI components that adapt based on user role. Develop optimistic UI updates with sync status indicators. Create memory-efficient list views with pagination. Standardize error and empty states across the application. Ensure loading state consistency.",
+      "testStrategy": "Create golden tests for visual consistency. Test responsive layouts on different screen sizes. Verify UI adaptation based on permissions. Test optimistic UI updates and error state handling. Validate accessibility compliance with screen readers and contrast requirements.",
+      "subtasks": [
+        {
+          "id": "09-001-01",
+          "title": "Configure Material Design 3 theme (primary, secondary, tertiary color schemes).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-001-02",
+          "title": "Implement core UI components (buttons, cards, dialogs, navigation elements).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-001-03",
+          "title": "Create a reusable component library with standardized usage patterns.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-001-04",
+          "title": "Ensure proper typography hierarchy and spacing per Material Design 3 guidelines.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-001-05",
+          "title": "Document component usage and provide examples for developers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-002-01",
+          "title": "Implement responsive grid system with breakpoints for mobile, tablet, and desktop.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-002-02",
+          "title": "Create adaptive layouts that reorganize content based on available space.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-002-03",
+          "title": "Ensure touch targets meet accessibility guidelines (minimum 48x48dp).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-002-04",
+          "title": "Test layouts on various device sizes and orientations.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-002-05",
+          "title": "Implement proper keyboard navigation and focus management for desktop users.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-003-01",
+          "title": "Develop a consistent system for offline status indicators in the UI.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-003-02",
+          "title": "Create permission-aware components that adapt based on user role.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-003-03",
+          "title": "Implement optimistic UI updates with sync status indicators for offline actions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-003-04",
+          "title": "Ensure visual consistency of all status indicators across the application.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-003-05",
+          "title": "Add tests to verify correct adaptation and indicator display.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-004-01",
+          "title": "Develop reusable list components supporting virtual scrolling.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-004-02",
+          "title": "Implement pagination controls following Material Design 3 guidelines.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-004-03",
+          "title": "Create infinite scrolling option for appropriate list views.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-004-04",
+          "title": "Ensure list items properly recycle views for memory efficiency.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-004-05",
+          "title": "Add loading indicators and test performance with large datasets.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-005-01",
+          "title": "Design and implement standardized loading indicators (skeletons, spinners).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-005-02",
+          "title": "Create consistent error state components with messaging and retry options.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-005-03",
+          "title": "Develop empty state templates with helpful guidance for users.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-005-04",
+          "title": "Ensure all states are accessible and properly announced to screen readers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "09-005-05",
+          "title": "Document usage patterns and test for consistency across the application.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "title": "Testing and Deployment Preparation",
+      "description": "Implement comprehensive testing across all layers and prepare for deployment.",
+      "status": "pending",
+      "dependencies": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9
+      ],
+      "priority": "high",
+      "details": "Implement domain layer tests for entities, value objects, and business rules. Create data layer tests for repositories and synchronization logic. Develop presentation layer tests for UI components and state management. Implement integration tests for complete feature slices. Add performance tests for memory efficiency and battery impact. Set up feature flags for gradual rollout. Configure analytics and monitoring. Prepare app store submission materials including screenshots and descriptions.",
+      "testStrategy": "Verify test coverage across all layers meets requirements. Run integration tests to validate end-to-end workflows. Perform performance testing with large datasets. Test on minimum supported platforms (Android 8.0+, iOS 13.0+). Validate the application against all technical and business constraints from section 7.",
+      "subtasks": [
+        {
+          "id": "10-001-01",
+          "title": "Develop unit tests for all domain entities and value objects to verify business rules and invariants.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-001-02",
+          "title": "Create tests for repositories to verify CRUD operations and proper data handling.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-001-03",
+          "title": "Implement tests for synchronization logic, including offline-to-online transitions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-001-04",
+          "title": "Use mock objects to isolate components and test edge cases.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-001-05",
+          "title": "Ensure at least 80% code coverage in domain and data layers.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-002-01",
+          "title": "Develop UI component tests to verify proper rendering and user interaction handling.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-002-02",
+          "title": "Create tests for state management to ensure proper data flow and UI updates.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-002-03",
+          "title": "Implement integration tests for complete feature slices (UI → domain → data layer).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-002-04",
+          "title": "Use snapshot testing for UI components where appropriate.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-002-05",
+          "title": "Create reusable test fixtures for integration and UI tests.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-003-01",
+          "title": "Develop performance tests for key metrics (startup time, screen transitions, data loading).",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-003-02",
+          "title": "Create memory usage tests to identify and prevent memory leaks.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-003-03",
+          "title": "Implement battery impact tests for typical usage scenarios.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-003-04",
+          "title": "Establish baseline performance metrics and set up automated regression testing.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-003-05",
+          "title": "Document performance requirements and test results.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-004-01",
+          "title": "Implement a feature flag system for remote configuration and gradual rollout.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-004-02",
+          "title": "Create feature flags for all major features and document their usage.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-004-03",
+          "title": "Set up analytics to track user behavior, feature usage, and error conditions.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-004-04",
+          "title": "Implement crash reporting and performance monitoring.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-004-05",
+          "title": "Create dashboards for key metrics and document analytics implementation.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-005-01",
+          "title": "Create screenshots for all supported devices showing key app features.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-005-02",
+          "title": "Write compelling app descriptions optimized for search.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-005-03",
+          "title": "Prepare privacy policy and terms of service documents.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-005-04",
+          "title": "Create promotional graphics, including app icon in all required sizes.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        },
+        {
+          "id": "10-005-05",
+          "title": "Compile release notes, set up A/B testing (if available), and create a final submission checklist.",
+          "status": "pending",
+          "details": "Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices."
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "projectName": "HR Connect Implementation",
+    "totalTasks": 10,
+    "sourceFile": "C:\\Users\\Darwin\\Desktop\\hr_connect\\scripts\\PRD.txt",
+    "generatedAt": "2023-06-15"
+  }
+}

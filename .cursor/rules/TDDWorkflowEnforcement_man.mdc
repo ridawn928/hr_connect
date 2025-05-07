@@ -1,0 +1,656 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces the Test-Driven Development (TDD) approach for the HR Connect application
+globs: "**/*.dart,**/*_test.dart"
+alwaysApply: false
+@tddWorkflowCompliance
+---
+
+# TDD Workflow Enforcement
+
+This rule provides guidance for implementing the Test-Driven Development (TDD) approach in the HR Connect application. It focuses on ensuring tests are written before implementation, adherence to the Red-Green-Refactor cycle, and appropriate testing for all architectural layers.
+
+## Core Principles
+
+1. Tests must be written before implementation code
+2. Follow the Red-Green-Refactor cycle for all features
+3. All layers (domain, data, presentation) must have appropriate tests
+4. Test files must follow a consistent naming and organization pattern
+5. Test coverage must be maintained for critical functionality
+
+## Required Packages
+
+```yaml
+dev_dependencies:
+  # Testing frameworks
+  flutter_test:
+    sdk: flutter
+  test: ^1.24.9            # For non-widget tests
+  
+  # Mocking
+  mockito: ^5.4.4          # For mocking dependencies
+  mocktail: ^1.0.1         # Simplified mocking alternative
+  
+  # State management testing
+  riverpod_test: ^2.3.4    # For testing Riverpod providers
+  
+  # UI testing
+  golden_toolkit: ^1.0.0   # For visual regression testing
+  integration_test:        # For end-to-end testing
+    sdk: flutter
+  patrol: ^2.3.1           # For advanced integration testing
+  
+  # Coverage
+  coverage: ^1.6.3         # For measuring test coverage
+```
+
+## TDD Process Implementation
+
+### 1. Write a Failing Test
+
+Start by creating a test file that describes the expected behavior:
+
+```dart
+// file: test/features/attendance/domain/use_cases/submit_attendance_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:dartz/dartz.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/domain/repositories/attendance_repository.dart';
+import 'package:hr_connect/features/attendance/domain/use_cases/submit_attendance.dart';
+
+@GenerateMocks([AttendanceRepository])
+void main() {
+  late SubmitAttendance useCase;
+  late MockAttendanceRepository mockRepository;
+  
+  setUp(() {
+    mockRepository = MockAttendanceRepository();
+    useCase = SubmitAttendance(mockRepository);
+  });
+  
+  test('should submit attendance when QR code is valid', () async {
+    // Arrange
+    const employeeId = 'employee123';
+    const qrCodeData = 'valid-qr-data';
+    
+    final expectedRecord = AttendanceRecord(
+      id: 'record123',
+      employeeId: employeeId,
+      timestamp: DateTime.now(),
+      status: AttendanceStatus.onTime,
+      location: 'Main Office',
+    );
+    
+    when(mockRepository.submitAttendance(
+      employeeId: employeeId,
+      qrCodeData: qrCodeData,
+    )).thenAnswer((_) async => Right(expectedRecord));
+    
+    // Act
+    final result = await useCase(
+      SubmitAttendanceParams(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      ),
+    );
+    
+    // Assert
+    expect(result, Right<Failure, AttendanceRecord>(expectedRecord));
+    verify(mockRepository.submitAttendance(
+      employeeId: employeeId,
+      qrCodeData: qrCodeData,
+    )).called(1);
+    verifyNoMoreInteractions(mockRepository);
+  });
+  
+  test('should return failure when QR code is invalid', () async {
+    // Arrange
+    const employeeId = 'employee123';
+    const qrCodeData = 'invalid-qr-data';
+    
+    when(mockRepository.submitAttendance(
+      employeeId: employeeId,
+      qrCodeData: qrCodeData,
+    )).thenAnswer((_) async => Left(ValidationFailure('Invalid QR code')));
+    
+    // Act
+    final result = await useCase(
+      SubmitAttendanceParams(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      ),
+    );
+    
+    // Assert
+    expect(result, Left<Failure, AttendanceRecord>(ValidationFailure('Invalid QR code')));
+    verify(mockRepository.submitAttendance(
+      employeeId: employeeId,
+      qrCodeData: qrCodeData,
+    )).called(1);
+    verifyNoMoreInteractions(mockRepository);
+  });
+}
+```
+
+Ensure the test fails by running it before implementation:
+
+```bash
+flutter test test/features/attendance/domain/use_cases/submit_attendance_test.dart
+```
+
+### 2. Implement Minimal Code to Pass the Test
+
+Create the minimal implementation to make tests pass:
+
+```dart
+// file: lib/features/attendance/domain/use_cases/submit_attendance.dart
+import 'package:dartz/dartz.dart';
+import 'package:equatable/equatable.dart';
+import 'package:injectable/injectable.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/core/usecases/usecase.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/domain/repositories/attendance_repository.dart';
+
+@injectable
+class SubmitAttendance implements UseCase<AttendanceRecord, SubmitAttendanceParams> {
+  final AttendanceRepository repository;
+  
+  SubmitAttendance(this.repository);
+  
+  @override
+  Future<Either<Failure, AttendanceRecord>> call(SubmitAttendanceParams params) async {
+    return await repository.submitAttendance(
+      employeeId: params.employeeId,
+      qrCodeData: params.qrCodeData,
+    );
+  }
+}
+
+class SubmitAttendanceParams extends Equatable {
+  final String employeeId;
+  final String qrCodeData;
+  
+  const SubmitAttendanceParams({
+    required this.employeeId,
+    required this.qrCodeData,
+  });
+  
+  @override
+  List<Object> get props => [employeeId, qrCodeData];
+}
+```
+
+Verify tests now pass:
+
+```bash
+flutter test test/features/attendance/domain/use_cases/submit_attendance_test.dart
+```
+
+### 3. Refactor While Keeping Tests Passing
+
+Refactor the code while ensuring tests continue to pass:
+
+```dart
+// Improved implementation after refactoring
+@injectable
+class SubmitAttendance implements UseCase<AttendanceRecord, SubmitAttendanceParams> {
+  final AttendanceRepository repository;
+  
+  SubmitAttendance(this.repository);
+  
+  @override
+  Future<Either<Failure, AttendanceRecord>> call(SubmitAttendanceParams params) async {
+    // Add additional validation if needed
+    if (params.qrCodeData.isEmpty) {
+      return Left(ValidationFailure('QR code cannot be empty'));
+    }
+    
+    return await repository.submitAttendance(
+      employeeId: params.employeeId,
+      qrCodeData: params.qrCodeData,
+    );
+  }
+}
+```
+
+Run tests again to ensure they still pass:
+
+```bash
+flutter test test/features/attendance/domain/use_cases/submit_attendance_test.dart
+```
+
+## Layer-Specific Testing Patterns
+
+### Domain Layer Testing
+
+Test entities, use cases, and value objects:
+
+```dart
+// file: test/features/attendance/domain/entities/attendance_record_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/domain/value_objects/attendance_status.dart';
+
+void main() {
+  group('AttendanceRecord', () {
+    test('should create valid attendance record', () {
+      // Arrange & Act
+      final record = AttendanceRecord(
+        id: 'record123',
+        employeeId: 'employee123',
+        timestamp: DateTime(2025, 5, 1, 9, 0),
+        status: AttendanceStatus.onTime,
+        location: 'Main Office',
+      );
+      
+      // Assert
+      expect(record.id, 'record123');
+      expect(record.employeeId, 'employee123');
+      expect(record.timestamp, DateTime(2025, 5, 1, 9, 0));
+      expect(record.status, AttendanceStatus.onTime);
+      expect(record.location, 'Main Office');
+    });
+    
+    test('records with same properties should be equal', () {
+      // Arrange
+      final record1 = AttendanceRecord(
+        id: 'record123',
+        employeeId: 'employee123',
+        timestamp: DateTime(2025, 5, 1, 9, 0),
+        status: AttendanceStatus.onTime,
+        location: 'Main Office',
+      );
+      
+      final record2 = AttendanceRecord(
+        id: 'record123',
+        employeeId: 'employee123',
+        timestamp: DateTime(2025, 5, 1, 9, 0),
+        status: AttendanceStatus.onTime,
+        location: 'Main Office',
+      );
+      
+      // Act & Assert
+      expect(record1, equals(record2));
+      expect(record1.hashCode, equals(record2.hashCode));
+    });
+  });
+}
+```
+
+### Data Layer Testing
+
+Test repository implementations and data sources:
+
+```dart
+// file: test/features/attendance/data/repositories/attendance_repository_impl_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:dartz/dartz.dart';
+import 'package:hr_connect/core/error/exceptions.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/core/network/network_info.dart';
+import 'package:hr_connect/features/attendance/data/datasources/attendance_local_data_source.dart';
+import 'package:hr_connect/features/attendance/data/datasources/attendance_remote_data_source.dart';
+import 'package:hr_connect/features/attendance/data/models/attendance_record_model.dart';
+import 'package:hr_connect/features/attendance/data/repositories/attendance_repository_impl.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+
+@GenerateMocks([
+  AttendanceLocalDataSource,
+  AttendanceRemoteDataSource,
+  NetworkInfo,
+])
+void main() {
+  late AttendanceRepositoryImpl repository;
+  late MockAttendanceLocalDataSource mockLocalDataSource;
+  late MockAttendanceRemoteDataSource mockRemoteDataSource;
+  late MockNetworkInfo mockNetworkInfo;
+  
+  setUp(() {
+    mockLocalDataSource = MockAttendanceLocalDataSource();
+    mockRemoteDataSource = MockAttendanceRemoteDataSource();
+    mockNetworkInfo = MockNetworkInfo();
+    repository = AttendanceRepositoryImpl(
+      localDataSource: mockLocalDataSource,
+      remoteDataSource: mockRemoteDataSource,
+      networkInfo: mockNetworkInfo,
+    );
+  });
+  
+  group('submitAttendance', () {
+    const employeeId = 'employee123';
+    const qrCodeData = 'valid-qr-data';
+    
+    final attendanceModel = AttendanceRecordModel(
+      id: 'record123',
+      employeeId: employeeId,
+      timestamp: DateTime.now(),
+      status: 'ON_TIME',
+      location: 'Main Office',
+    );
+    
+    test('should submit attendance record when online', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      when(mockRemoteDataSource.submitAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      )).thenAnswer((_) async => attendanceModel);
+      
+      // Act
+      final result = await repository.submitAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      );
+      
+      // Assert
+      verify(mockRemoteDataSource.submitAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      )).called(1);
+      verify(mockLocalDataSource.cacheAttendanceRecord(attendanceModel)).called(1);
+      expect(result, Right<Failure, AttendanceRecord>(attendanceModel.toEntity()));
+    });
+    
+    test('should cache attendance locally when offline and return optimistic result', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => false);
+      when(mockLocalDataSource.createPendingAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      )).thenAnswer((_) async => attendanceModel);
+      
+      // Act
+      final result = await repository.submitAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      );
+      
+      // Assert
+      verify(mockLocalDataSource.createPendingAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      )).called(1);
+      verifyZeroInteractions(mockRemoteDataSource);
+      expect(result, Right<Failure, AttendanceRecord>(attendanceModel.toEntity()));
+    });
+  });
+}
+```
+
+### Presentation Layer Testing
+
+Test providers, controllers, and UI components:
+
+```dart
+// file: test/features/attendance/presentation/providers/attendance_provider_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dartz/dartz.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/domain/use_cases/submit_attendance.dart';
+import 'package:hr_connect/features/attendance/presentation/providers/attendance_provider.dart';
+
+@GenerateMocks([SubmitAttendance])
+void main() {
+  late MockSubmitAttendance mockSubmitAttendance;
+  late ProviderContainer container;
+  
+  setUp(() {
+    mockSubmitAttendance = MockSubmitAttendance();
+    
+    container = ProviderContainer(
+      overrides: [
+        submitAttendanceProvider.overrideWithValue(mockSubmitAttendance),
+      ],
+    );
+    
+    addTearDown(container.dispose);
+  });
+  
+  group('attendanceStateNotifier', () {
+    const employeeId = 'employee123';
+    const qrCodeData = 'valid-qr-data';
+    
+    final attendanceRecord = AttendanceRecord(
+      id: 'record123',
+      employeeId: employeeId,
+      timestamp: DateTime.now(),
+      status: AttendanceStatus.onTime,
+      location: 'Main Office',
+    );
+    
+    test('initial state should be idle', () {
+      // Act
+      final state = container.read(attendanceStateProvider);
+      
+      // Assert
+      expect(state, AttendanceState.idle());
+    });
+    
+    test('should emit loading then success states when submitting attendance succeeds', () async {
+      // Arrange
+      when(mockSubmitAttendance(any)).thenAnswer((_) async => Right(attendanceRecord));
+      
+      // Assert initial state
+      expect(container.read(attendanceStateProvider), AttendanceState.idle());
+      
+      // Act - Start submission
+      container.read(attendanceStateProvider.notifier).submitAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      );
+      
+      // Assert loading state
+      expect(container.read(attendanceStateProvider), AttendanceState.loading());
+      
+      // Wait for async operation to complete
+      await Future.microtask(() {});
+      
+      // Assert success state
+      expect(
+        container.read(attendanceStateProvider),
+        AttendanceState.success(record: attendanceRecord),
+      );
+      
+      // Verify use case was called with correct params
+      verify(mockSubmitAttendance(
+        SubmitAttendanceParams(
+          employeeId: employeeId,
+          qrCodeData: qrCodeData,
+        ),
+      )).called(1);
+    });
+    
+    test('should emit loading then error states when submitting attendance fails', () async {
+      // Arrange
+      final failure = ValidationFailure('Invalid QR code');
+      when(mockSubmitAttendance(any)).thenAnswer((_) async => Left(failure));
+      
+      // Assert initial state
+      expect(container.read(attendanceStateProvider), AttendanceState.idle());
+      
+      // Act - Start submission
+      container.read(attendanceStateProvider.notifier).submitAttendance(
+        employeeId: employeeId,
+        qrCodeData: qrCodeData,
+      );
+      
+      // Assert loading state
+      expect(container.read(attendanceStateProvider), AttendanceState.loading());
+      
+      // Wait for async operation to complete
+      await Future.microtask(() {});
+      
+      // Assert error state
+      expect(
+        container.read(attendanceStateProvider),
+        AttendanceState.error(message: 'Invalid QR code'),
+      );
+    });
+  });
+}
+```
+
+### Widget Testing
+
+Test UI components:
+
+```dart
+// file: test/features/attendance/presentation/widgets/qr_scanner_widget_test.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/mockito.dart';
+import 'package:hr_connect/features/attendance/presentation/widgets/qr_scanner_widget.dart';
+
+class MockQrCallback extends Mock {
+  void call(String qrData);
+}
+
+void main() {
+  late MockQrCallback mockCallback;
+  
+  setUp(() {
+    mockCallback = MockQrCallback();
+  });
+  
+  testWidgets('should display scanning UI elements', (WidgetTester tester) async {
+    // Arrange
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: QrScannerWidget(
+          onQrDetected: mockCallback,
+        ),
+      ),
+    ));
+    
+    // Assert
+    expect(find.text('Scan QR Code'), findsOneWidget);
+    expect(find.byType(MobileScanner), findsOneWidget);
+    expect(find.byIcon(Icons.qr_code_scanner), findsOneWidget);
+  });
+  
+  testWidgets('should call callback when QR code is detected', (WidgetTester tester) async {
+    // This test requires a mock for MobileScanner that can simulate QR detection
+    // Implementation depends on how MobileScanner is integrated
+  });
+}
+```
+
+## Test-First Development Process
+
+Follow this workflow for all feature implementations:
+
+1. **Domain Layer Tests First**:
+   - Create entity tests to validate business rules
+   - Write use case tests to verify expected workflows
+   - Test value objects for proper validation and equality
+
+2. **Data Layer Tests Next**:
+   - Create repository tests with mocked data sources
+   - Test data source implementations
+   - Verify sync and offline behavior
+
+3. **Presentation Layer Tests**:
+   - Test providers and state management
+   - Create widget tests for UI components
+   - Verify screen workflows
+
+4. **Integration Testing**:
+   - Write tests that verify interactions between layers
+   - Test complete feature workflows
+
+## Business Rules for TDD Implementation
+
+1. **Red-Green-Refactor Cycle**
+   - Always start with a failing test (red)
+   - Implement minimal code to make the test pass (green)
+   - Improve the code while keeping tests passing (refactor)
+   - Commit code only after tests are passing
+
+2. **Test Coverage Requirements**
+   - Domain layer: minimum 90% coverage
+   - Data layer: minimum 85% coverage
+   - Presentation logic: minimum 80% coverage
+   - Critical paths: 100% coverage
+   - Overall project: minimum 80% coverage
+
+3. **Test Organization**
+   - Tests must mirror application structure
+   - Test filenames must end with `_test.dart`
+   - Group tests logically with `group()` functions
+   - Use descriptive test names that explain behavior
+
+4. **Testing Priorities**
+   - Business logic must be tested thoroughly
+   - Edge cases must have dedicated tests
+   - Error paths must be tested explicitly
+   - UI tests should focus on interaction patterns
+
+5. **Test Quality Standards**
+   - Tests must be independent and isolated
+   - Arrange-Act-Assert pattern must be used
+   - Mock dependencies appropriately
+   - Test documentation must explain the test purpose
+
+## Test Command Examples
+
+```bash
+# Run tests for a specific file
+flutter test test/features/attendance/domain/use_cases/submit_attendance_test.dart
+
+# Run all tests in a directory
+flutter test test/features/attendance/
+
+# Run all domain layer tests
+flutter test test/features/*/domain/
+
+# Run with coverage
+flutter test --coverage
+genhtml coverage/lcov.info -o coverage/html
+```
+
+## Implementation Best Practices
+
+1. **Write Testable Code**
+   - Dependency injection for all components
+   - Single Responsibility Principle for classes
+   - Interface-based design for dependencies
+   - Small, focused functions with clear inputs/outputs
+
+2. **Efficient Testing**
+   - Mock external dependencies
+   - Use test doubles for complex objects
+   - Create test fixtures for common scenarios
+   - Keep tests fast by avoiding unnecessary setup
+
+3. **Testing Edge Cases**
+   - Always test boundary conditions
+   - Cover error scenarios thoroughly
+   - Include tests for timeouts and concurrency
+   - Test with minimal and maximal values
+
+4. **Continuous Testing**
+   - Run tests frequently during development
+   - Integrate tests in CI/CD pipeline
+   - Enforce test coverage thresholds
+   - Treat test failures as blocking issues
+
+5. **Test Maintenance**
+   - Update tests when requirements change
+   - Refactor tests alongside production code
+   - Keep test code as clean as production code
+
+   - Document complex test scenarios

@@ -1,0 +1,493 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+---
+description: Core guidelines for HR Connect Flutter implementation
+globs: **/*.dart
+alwaysApply: true
+---
+
+# HR Connect Flutter Development Guidelines
+
+You are a senior Flutter/Dart developer following best practices for the HR Connect mobile workforce management solution. This solution uses a Modified Vertical Slice Architecture (MVSA) with an offline-first approach and follows the aggregate pattern for domain modeling with Employee as the primary aggregate root.
+
+## Architecture & Design Principles
+
+- Follow the Modified Vertical Slice Architecture (MVSA) with a Core + Features approach
+- Implement complete vertical slices for each business capability (QR Attendance, Time Management, etc.)
+- Apply Clean Architecture principles with clear separation of concerns
+- Use the Aggregate Pattern for domain modeling with Employee as the primary aggregate root
+- Support related profile aggregates: AuthenticationProfile, DeviceProfile, AttendanceProfile, RequestProfile, EmploymentProfile, PerformanceProfile, NotificationProfile, SyncProfile
+- Maintain an offline-first approach with background synchronization
+- Apply the Repository pattern for data access abstraction
+- Use Either type pattern from dartz for error handling
+
+## Code Organization
+
+- Organize code by features (vertical slices) that represent business capabilities
+- Each feature should cut across all architectural layers (domain, data, presentation)
+- Separate core infrastructure from feature-specific code
+- Keep related code together within feature modules
+- Use appropriate folder structure:
+  ```
+  lib/
+    core/                 # Shared infrastructure
+      di/                 # Dependency injection
+      error/              # Error handling
+      network/            # Network layer
+      storage/            # Local storage
+      utils/              # Utilities
+      security/           # Security foundations
+    features/             # Business capability slices
+      attendance/         # QR attendance system
+        domain/           # Domain layer (entities, repositories, use cases)
+        data/             # Data layer (models, repositories impl, datasources)
+        presentation/     # UI layer (screens, widgets, state)
+      time_management/    # Leave and request management
+      employee/           # Employee profile management
+      admin/              # Administrative portals
+      authentication/     # Authentication feature
+  test/
+    unit/                 # Unit tests for domain and data layers
+      core/              
+      features/
+        feature_name/
+    widget/               # Widget tests for presentation layer
+      core/
+      features/
+        feature_name/
+    integration/          # Integration tests for feature slices
+      features/
+        feature_name/
+    e2e/                  # End-to-end tests with Patrol
+  ```
+
+## State Management
+
+- Use Riverpod (^2.6.1) for reactive state management
+- Apply the AsyncValue pattern for handling loading/error states
+- Implement domain events for cross-feature communication
+- Create feature-specific providers with proper scoping
+- Use optimistic UI updates with sync status indicators
+- Avoid deeply nested widget trees and excessive rebuilds
+- Organize providers by feature to maintain separation of concerns
+- Example:
+  ```dart
+  // Define providers
+  final attendanceRepositoryProvider = Provider<AttendanceRepository>((ref) {
+    return AttendanceRepositoryImpl(ref.watch(databaseProvider));
+  });
+
+  final userAttendanceProvider = FutureProvider.family<List<AttendanceRecord>, String>((ref, userId) {
+    return ref.watch(attendanceRepositoryProvider).getAttendanceForUser(userId);
+  });
+
+  // Usage in UI
+  class AttendanceHistoryScreen extends ConsumerWidget {
+    final String userId;
+    
+    @override
+    Widget build(BuildContext context, WidgetRef ref) {
+      final attendanceAsync = ref.watch(userAttendanceProvider(userId));
+      
+      return attendanceAsync.when(
+        data: (records) => AttendanceListView(records: records),
+        loading: () => const LoadingIndicator(),
+        error: (error, stack) => ErrorDisplay(message: error.toString()),
+      );
+    }
+  }
+  ```
+
+## Dart Coding Standards
+
+- Always declare the type of each variable and function (parameters and return value)
+- Avoid using 'any' type; create necessary types instead
+- Keep lines under 80 characters
+- Use PascalCase for classes and enums
+- Use camelCase for variables, functions, and methods
+- Use snake_case for file and directory names
+- Follow the flutter_lints rules (^3.0.1)
+- Add trailing commas for better formatting in multi-line structures
+- Use consistent parameter ordering in constructors (required parameters first, then optional)
+- Apply the freezed package for immutable model classes when appropriate
+
+## Feature Implementation Guidelines
+
+### QR Code Attendance System
+- Implement time-based QR codes with embedded timestamps and digital signatures
+- Create validation logic with configurable time windows (15 minutes default)
+- Implement status classification (ON_TIME, LATE, ABSENT, HALF_DAY, APPROVED_LEAVE)
+- Apply security measures including nonce tracking to prevent replay attacks
+- Support offline validation with secure storage
+
+### Comprehensive Time Management
+- Implement leave types (Emergency, Personal, Sick, Vacation, etc.)
+- Support approval workflows with escalation paths
+- Add time-based business rules (24h emergency leave, 30-day personal leave)
+- Create interfaces for overtime and remote work requests
+- Implement configurable grace periods and limits
+
+### Employee Profile Management
+- Create full CRUD operations for employee data with proper validation
+- Implement document upload and management with Firebase Storage
+- Apply field-level encryption for sensitive employee data
+- Support caching for profile images and documents
+- Ensure offline profile access and editing
+
+### Administrative Portals
+- Implement role-based access control for portal features
+- Create QR generation interface in the Payroll Portal
+- Develop system administration tools in the HR Portal
+- Support multi-factor authentication for admin accounts
+- Implement audit trails for administrative actions
+
+## Database & Offline Capabilities
+
+- Use Drift (^2.26.1) for local database with type-safe queries
+- Apply Flutter Data for offline-first framework integration
+- Implement Flutter Secure Storage for sensitive information
+- Apply field-level encryption for sensitive data (Encrypt package)
+- Provide complete offline functionality for all core features
+- Implement background synchronization with WorkManager
+- Create conflict detection and resolution mechanisms
+- Develop prioritized sync queue with business importance ordering
+- Display clear offline status indicators in the UI
+- Respect 7-day (168-hour) offline limit as per requirements
+
+## Security Practices
+
+- Implement JWT-based authentication with refresh mechanism
+- Store sensitive data using Flutter Secure Storage
+- Apply role-based access control (Employee, Branch Manager, Payroll Portal, HR Portal)
+- Use field-level encryption for sensitive data
+- Validate device integrity where required
+- Implement certificate pinning for network requests
+- Create comprehensive audit trails for critical actions
+- Support multi-factor authentication for admin accounts
+- Limit each employee to a maximum of 2 registered devices
+
+## UI Implementation
+
+- Follow Material Design 3 guidelines for consistent look and feel
+- Create responsive layouts that work on mobile, tablet, and desktop
+- Develop permission-aware UI components that adapt based on role
+- Implement offline status indicators
+- Use memory-efficient list views with pagination
+- Standardize error and empty states across the application
+- Ensure loading state consistency
+- Create optimistic UI updates with sync status indicators
+- Example theme implementation:
+  ```dart
+  class AppTheme {
+    static ThemeData lightTheme() {
+      final colorScheme = ColorScheme.fromSeed(
+        seedColor: const Color(0xFF1E88E5),
+        brightness: Brightness.light,
+      );
+      
+      return ThemeData(
+        useMaterial3: true,
+        colorScheme: colorScheme,
+        appBarTheme: AppBarTheme(
+          backgroundColor: colorScheme.primary,
+          foregroundColor: colorScheme.onPrimary,
+        ),
+        // Other theme configurations...
+      );
+    }
+    
+    static ThemeData darkTheme() {
+      // Dark theme implementation
+    }
+  }
+  ```
+
+## TDD Workflow
+
+Always follow this TDD workflow:
+1. Write a failing test that defines the expected behavior
+2. Write the minimum code to make the test pass
+3. Refactor while keeping tests passing
+
+When implementing new features or fixing bugs:
+- Begin with domain layer tests to validate business rules
+- Create use case tests that verify business workflows
+- Test repositories with mocked data sources
+- Verify UI behavior with widget tests
+- Apply the Red-Green-Refactor cycle consistently
+- Maintain high test coverage for critical functionality
+- Prioritize testing edge cases and error scenarios
+- Write tests that are focused, fast, and deterministic
+
+Example of a domain entity test:
+```dart
+void main() {
+  group('QrCode entity', () {
+    test('should reject QR code when timestamp is older than 15 minutes', () {
+      // Arrange
+      final qrCode = QrCode.withTimestamp(
+        DateTime.now().subtract(Duration(minutes: 20))
+      );
+      final validator = QrCodeValidator();
+      
+      // Act
+      final result = validator.validate(qrCode);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, QrValidationError.expired);
+    });
+    
+    test('should accept QR code when timestamp is within 15 minutes', () {
+      // Arrange
+      final qrCode = QrCode.withTimestamp(
+        DateTime.now().subtract(Duration(minutes: 10))
+      );
+      final validator = QrCodeValidator();
+      
+      // Act
+      final result = validator.validate(qrCode);
+      
+      // Assert
+      expect(result.isValid, true);
+    });
+  });
+}
+```
+
+## Documentation and Comments
+
+Follow these documentation practices:
+- Document all public APIs with clear comments
+- Add class-level documentation explaining purpose
+- Comment complex algorithms and business rules
+- Keep comments updated when code changes
+- Use consistent documentation style
+
+When writing documentation:
+- Focus on "why" rather than "what"
+- Document assumptions and constraints
+- Include examples for complex functionality
+- Document edge cases and error scenarios
+- Keep documentation concise and clear
+
+Example of good documentation:
+```dart
+/// A service responsible for validating QR codes used in the attendance system.
+/// 
+/// This validator checks:
+/// - Time validity: QR codes expire after 15 minutes
+/// - Digital signature: Ensures the QR code was generated by an authorized system
+/// - Replay protection: Prevents the same QR code from being used twice
+class QrCodeValidator {
+  final Duration validityWindow;
+  
+  /// Creates a validator with a specific time window for validity.
+  ///
+  /// By default, QR codes are valid for 15 minutes from generation time.
+  QrCodeValidator({this.validityWindow = const Duration(minutes: 15)});
+  
+  /// Validates the given QR code against security and time constraints.
+  /// 
+  /// Returns a [ValidationResult] with [isValid] set to true if the code
+  /// is valid and can be used for attendance tracking.
+  /// 
+  /// Throws a [SecurityException] if the code signature is invalid.
+  ValidationResult validate(QrCode code) {
+    // Implementation...
+  }
+}
+```
+
+## Error Handling
+
+- Use the Either type pattern from dartz package for functional error handling
+- Create specific Failure classes for different error types
+- Handle offline errors gracefully with optimistic updates
+- Log errors appropriately for debugging and monitoring
+- Provide user-friendly error messages
+- Implement retry mechanisms for network operations
+- Example:
+  ```dart
+  // Return type indicating success or failure
+  Future<Either<Failure, AttendanceRecord>> submitAttendance(QrCode code) async {
+    try {
+      final result = await attendanceRepository.submit(code);
+      return Right(result);
+    } on ValidationException catch (e) {
+      return Left(ValidationFailure(e.message));
+    } on NetworkException catch (e) {
+      // Store for later sync and return optimistic result
+      await syncQueue.add(SyncOperation.submitAttendance(code));
+      return Right(AttendanceRecord.pending(code));
+    } catch (e) {
+      return Left(UnexpectedFailure(e.toString()));
+    }
+  }
+  ```
+
+## Testing Approach
+
+- Write unit tests for domain entities, use cases, and repositories
+- Create widget tests for UI components
+- Implement integration tests for feature slices
+- Test offline functionality thoroughly
+- Verify synchronization features with simulated connectivity changes
+- Test performance with large datasets
+- Ensure all security features are properly tested
+
+For domain layer testing:
+```dart
+// Sample test for a domain entity
+test('LeaveRequest should not allow end date before start date', () {
+  // Arrange
+  final startDate = DateTime(2025, 5, 10);
+  final endDate = DateTime(2025, 5, 8);
+  
+  // Act & Assert
+  expect(
+    () => LeaveRequest(
+      type: LeaveType.personal,
+      startDate: startDate,
+      endDate: endDate,
+      reason: 'Vacation',
+    ),
+    throwsA(isA<ValidationException>()),
+  );
+});
+```
+
+For widget testing:
+```dart
+testWidgets('QrScannerScreen shows error for invalid QR code', (tester) async {
+  // Arrange
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: [
+        qrValidatorProvider.overrideWithValue(
+          MockQrValidator(isValid: false, errorCode: QrValidationError.expired),
+        ),
+      ],
+      child: MaterialApp(home: QrScannerScreen()),
+    ),
+  );
+  
+  // Act
+  await tester.tap(find.byType(ScanButton));
+  await tester.pumpAndSettle();
+  
+  // Assert
+  expect(find.text('QR code has expired'), findsOneWidget);
+});
+```
+
+For integration testing:
+```dart
+testWidgets('Complete leave request flow', (tester) async {
+  // Arrange - Set up all providers and repositories
+  await tester.pumpWidget(/* Complete app with test overrides */);
+  
+  // Act - Perform the entire flow
+  await tester.tap(find.byType(RequestLeaveButton));
+  await tester.pumpAndSettle();
+  
+  await tester.enterText(find.byType(ReasonField), 'Family emergency');
+  await tester.pumpAndSettle();
+  
+  await tester.tap(find.byType(SubmitButton));
+  await tester.pumpAndSettle();
+  
+  // Assert - Verify the request was created and UI updated
+  expect(find.text('Request submitted successfully'), findsOneWidget);
+  
+  // Verify repository was called correctly
+  verify(mockLeaveRepository.createRequest(any)).called(1);
+});
+```
+
+## Performance Considerations
+
+- Monitor memory usage with large datasets
+- Optimize image loading with caching
+- Use lazy loading for list items
+- Implement efficient background processing
+- Minimize unnecessary rebuilds
+- Control battery usage for background operations (less than 5% per day)
+- Apply pagination for large data sets
+- Optimize startup time
+- Ensure application functions on devices with 2GB RAM
+- Limit local database size to under 100MB for typical usage
+
+## Specific Implementation Notes
+
+- Each aggregate (AuthenticationProfile, DeviceProfile, etc.) should have its own set of repositories
+- Always use proper error handling with Either<Failure, Success> from Dartz
+- Implement proper validation for all user inputs
+- Create clear synchronization status indicators for the user
+- Maintain proper documentation for complex business logic
+
+Example of aggregate-specific repository pattern:
+```dart
+// Domain repository interface
+abstract class AuthenticationProfileRepository {
+  Future<Either<AuthFailure, AuthenticationProfile>> getProfile(String userId);
+  Future<Either<AuthFailure, Unit>> updateProfile(AuthenticationProfile profile);
+  Future<Either<AuthFailure, Unit>> changePassword(String currentPassword, String newPassword);
+  Stream<Either<AuthFailure, AuthenticationStatus>> watchAuthStatus();
+}
+
+// Implementation
+class AuthenticationProfileRepositoryImpl implements AuthenticationProfileRepository {
+  final AuthenticationProfileLocalDataSource _localDataSource;
+  final AuthenticationProfileRemoteDataSource _remoteDataSource;
+  final NetworkInfo _networkInfo;
+
+  AuthenticationProfileRepositoryImpl(
+    this._localDataSource, 
+    this._remoteDataSource,
+    this._networkInfo,
+  );
+
+  @override
+  Future<Either<AuthFailure, AuthenticationProfile>> getProfile(String userId) async {
+    try {
+      // Try to get from local cache first
+      final localProfile = await _localDataSource.getProfile(userId);
+      
+      // If online, try to get fresh data and update cache
+      if (await _networkInfo.isConnected) {
+        try {
+          final remoteProfile = await _remoteDataSource.getProfile(userId);
+          await _localDataSource.cacheProfile(remoteProfile);
+          return Right(remoteProfile);
+        } on ServerException {
+          // If server fails but we have local data, return that
+          return Right(localProfile);
+        }
+      }
+      
+      // If offline, return local data
+      return Right(localProfile);
+    } on CacheException {
+      // If no local data and we're online, try remote
+      if (await _networkInfo.isConnected) {
+        try {
+          final remoteProfile = await _remoteDataSource.getProfile(userId);
+          await _localDataSource.cacheProfile(remoteProfile);
+          return Right(remoteProfile);
+        } on ServerException {
+          return Left(ServerFailure());
+        }
+      }
+      // No local data and offline
+      return Left(CacheFailure());
+    }
+  }
+  
+  // Other implementations...
+}
+```
+

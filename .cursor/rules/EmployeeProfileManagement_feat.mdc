@@ -1,0 +1,1529 @@
+---
+description: 
+globs: **/employee_*.dart,**/profile_*.dart,**/document_*.dart,**/features/employee/**/*.dart,**/features/profile/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's Employee Profile Management feature
+globs: **/employee_*.dart,**/profile_*.dart,**/document_*.dart,**/features/employee/**/*.dart,**/features/profile/**/*.dart
+alwaysApply: false
+---
+
+# Employee Profile Management
+
+This rule provides implementation guidance for the Employee Profile Management feature of HR Connect - a Flutter-based workforce management solution with offline-first capabilities.
+
+## Feature Overview
+
+The Employee Profile Management feature enables:
+- Core employee data management (personal and organizational details)
+- Employment details tracking (position, department, tenure)
+- Performance metrics and goals tracking
+- Skills and certifications management
+- Document upload and management with Firebase Storage
+- Profile image handling with caching
+- Employee history tracking
+
+## Required Packages
+
+```yaml
+dependencies:
+  # State Management
+  riverpod: ^2.6.1          # Core state management
+  flutter_riverpod: ^2.6.1  # Flutter integration for Riverpod
+  
+  # Database
+  drift: ^2.26.1            # Local database
+  flutter_data: ^2.16.0     # Offline-first framework
+  
+  # Storage & Documents
+  firebase_storage: ^12.4.5  # Document and image storage
+  flutter_secure_storage: ^9.2.4  # For sensitive information
+  encrypt: ^5.0.1           # Field-level encryption
+  image_picker: ^0.8.9      # Profile image capture
+  cached_network_image: ^3.3.1  # Profile image caching
+  file_picker: ^5.5.0       # Document selection
+  open_file: ^3.3.2         # Document viewing
+  
+  # Models and Utils
+  freezed: ^2.3.5           # Immutable model classes
+  json_serializable: ^6.7.0  # JSON handling
+  dartz: ^0.10.1            # Functional error handling
+  uuid: ^3.0.7              # Unique identifiers
+  intl: ^0.20.2             # Formatting
+```
+
+## Domain Models
+
+### Employee Aggregate Root
+
+```dart
+/// Core Employee entity - the aggregate root
+@freezed
+class Employee with _$Employee {
+  const factory Employee({
+    required String id,
+    required String firstName,
+    required String lastName,
+    required String email,
+    String? phoneNumber,
+    required DateTime dateOfBirth,
+    required Gender gender,
+    required String employeeCode,
+    required EmploymentStatus status,
+    required DateTime hireDate,
+    DateTime? terminationDate,
+    required SyncStatus syncStatus,
+  }) = _Employee;
+  
+  factory Employee.fromJson(Map<String, dynamic> json) => 
+      _$EmployeeFromJson(json);
+      
+  /// Returns the full name of the employee
+  String get fullName => '$firstName $lastName';
+}
+
+enum Gender { male, female, other, preferNotToSay }
+
+enum EmploymentStatus {
+  active,
+  onLeave,
+  suspended,
+  terminated,
+  retired
+}
+
+/// Employee's employment details
+@freezed
+class EmploymentProfile with _$EmploymentProfile {
+  const factory EmploymentProfile({
+    required String id,
+    required String employeeId,
+    required String departmentId,
+    required String positionId,
+    required String branchId,
+    required String reportingManagerId,
+    required DateTime effectiveDate,
+    String? employmentType,
+    EncryptedSalary? salary,
+    required int probationPeriodDays,
+    bool? probationCompleted,
+    List<String>? workingDays,
+    TimeOfDay? workHoursStart,
+    TimeOfDay? workHoursEnd,
+    required SyncStatus syncStatus,
+  }) = _EmploymentProfile;
+  
+  factory EmploymentProfile.fromJson(Map<String, dynamic> json) => 
+      _$EmploymentProfileFromJson(json);
+}
+
+/// Encrypted salary information
+@freezed
+class EncryptedSalary with _$EncryptedSalary {
+  const factory EncryptedSalary({
+    required String encryptedValue,
+    required String currencyCode,
+    required SalaryFrequency frequency,
+    required DateTime effectiveDate,
+  }) = _EncryptedSalary;
+  
+  factory EncryptedSalary.fromJson(Map<String, dynamic> json) => 
+      _$EncryptedSalaryFromJson(json);
+}
+
+enum SalaryFrequency { hourly, daily, weekly, biweekly, monthly, annual }
+
+/// Employee's performance metrics and goals
+@freezed
+class PerformanceProfile with _$PerformanceProfile {
+  const factory PerformanceProfile({
+    required String id,
+    required String employeeId,
+    required List<PerformanceGoal> goals,
+    required List<PerformanceReview> reviews,
+    required List<String> skills,
+    required List<Certification> certifications,
+    required SyncStatus syncStatus,
+  }) = _PerformanceProfile;
+  
+  factory PerformanceProfile.fromJson(Map<String, dynamic> json) => 
+      _$PerformanceProfileFromJson(json);
+}
+
+/// A performance goal assigned to an employee
+@freezed
+class PerformanceGoal with _$PerformanceGoal {
+  const factory PerformanceGoal({
+    required String id,
+    required String title,
+    required String description,
+    required DateTime dueDate,
+    required GoalStatus status,
+    required GoalType type,
+    required int progressPercentage,
+    List<String>? attachmentUrls,
+    String? assignedBy,
+    DateTime? completedDate,
+    String? feedback,
+  }) = _PerformanceGoal;
+  
+  factory PerformanceGoal.fromJson(Map<String, dynamic> json) => 
+      _$PerformanceGoalFromJson(json);
+}
+
+enum GoalStatus { active, completed, overdue, cancelled }
+enum GoalType { individual, team, organizational }
+
+/// Document stored in the employee's profile
+@freezed
+class EmployeeDocument with _$EmployeeDocument {
+  const factory EmployeeDocument({
+    required String id,
+    required String employeeId,
+    required String filename,
+    required String fileType,
+    required String storageUrl,
+    required DateTime uploadDate,
+    required DocumentCategory category,
+    required bool isArchived,
+    required SyncStatus syncStatus,
+    String? uploadedBy,
+    DateTime? expiryDate,
+    DateTime? lastViewedDate,
+  }) = _EmployeeDocument;
+  
+  factory EmployeeDocument.fromJson(Map<String, dynamic> json) => 
+      _$EmployeeDocumentFromJson(json);
+}
+
+enum DocumentCategory {
+  identification,
+  contract,
+  certification,
+  performance,
+  medical,
+  other
+}
+```
+
+## Core Use Cases
+
+### Profile Management
+
+```dart
+@riverpod
+class EmployeeProfileManager extends _$EmployeeProfileManager {
+  @override
+  FutureOr<Unit> build() {
+    return unit;
+  }
+  
+  Future<Either<EmployeeFailure, Employee>> updateEmployeeProfile({
+    required String employeeId,
+    required String firstName,
+    required String lastName,
+    required String email,
+    String? phoneNumber,
+    required Gender gender,
+  }) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      // Get current employee data
+      final employeeRepository = ref.read(employeeRepositoryProvider);
+      final employeeResult = await employeeRepository.getEmployeeById(employeeId);
+      
+      final employee = employeeResult.fold(
+        (failure) {
+          state = AsyncValue.error(failure, StackTrace.current);
+          return null;
+        },
+        (employee) => employee,
+      );
+      
+      if (employee == null) {
+        return left(const EmployeeFailure.notFound());
+      }
+      
+      // Validate email format
+      if (!_isValidEmail(email)) {
+        state = AsyncValue.error(
+          const EmployeeFailure.invalidEmail(),
+          StackTrace.current,
+        );
+        return left(const EmployeeFailure.invalidEmail());
+      }
+      
+      // Check if email is already in use by another employee
+      if (email != employee.email) {
+        final isEmailUnique = await _checkEmailUniqueness(email, employeeId);
+        if (!isEmailUnique) {
+          state = AsyncValue.error(
+            const EmployeeFailure.emailAlreadyInUse(),
+            StackTrace.current,
+          );
+          return left(const EmployeeFailure.emailAlreadyInUse());
+        }
+      }
+      
+      // Update employee profile
+      final updatedEmployee = employee.copyWith(
+        firstName: firstName,
+        lastName: lastName,
+        email: email,
+        phoneNumber: phoneNumber,
+        gender: gender,
+        syncStatus: SyncStatus.pending,
+      );
+      
+      final result = await employeeRepository.updateEmployee(updatedEmployee);
+      
+      result.fold(
+        (failure) => state = AsyncValue.error(failure, StackTrace.current),
+        (success) => state = AsyncValue.data(unit),
+      );
+      
+      return result;
+    } catch (e, st) {
+      state = AsyncValue.error(
+        EmployeeFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(EmployeeFailure.unexpected(e.toString()));
+    }
+  }
+  
+  bool _isValidEmail(String email) {
+    final emailRegExp = RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$');
+    return emailRegExp.hasMatch(email);
+  }
+  
+  Future<bool> _checkEmailUniqueness(String email, String currentEmployeeId) async {
+    final employeeRepository = ref.read(employeeRepositoryProvider);
+    final result = await employeeRepository.findEmployeeByEmail(email);
+    
+    return result.fold(
+      (failure) => true, // If there's an error, assume email is unique
+      (employee) => employee == null || employee.id == currentEmployeeId,
+    );
+  }
+}
+```
+
+### Document Management
+
+```dart
+@riverpod
+class DocumentManager extends _$DocumentManager {
+  @override
+  FutureOr<Unit> build() {
+    return unit;
+  }
+  
+  Future<Either<DocumentFailure, EmployeeDocument>> uploadDocument({
+    required String employeeId,
+    required File file,
+    required DocumentCategory category,
+    DateTime? expiryDate,
+  }) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      // Validate file size (max 10MB)
+      final fileSize = await file.length();
+      if (fileSize > 10 * 1024 * 1024) {
+        state = AsyncValue.error(
+          const DocumentFailure.fileTooLarge(),
+          StackTrace.current,
+        );
+        return left(const DocumentFailure.fileTooLarge());
+      }
+      
+      // Validate file type
+      final filename = file.path.split('/').last;
+      final fileExtension = filename.split('.').last.toLowerCase();
+      final allowedExtensions = ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'];
+      
+      if (!allowedExtensions.contains(fileExtension)) {
+        state = AsyncValue.error(
+          const DocumentFailure.invalidFileType(),
+          StackTrace.current,
+        );
+        return left(const DocumentFailure.invalidFileType());
+      }
+      
+      // Upload file to Firebase Storage
+      final storageRepository = ref.read(storageRepositoryProvider);
+      final storageResult = await storageRepository.uploadEmployeeDocument(
+        employeeId: employeeId,
+        file: file,
+        filename: filename,
+      );
+      
+      // Create document record
+      final documentRepository = ref.read(documentRepositoryProvider);
+      
+      return storageResult.fold(
+        (failure) {
+          state = AsyncValue.error(failure, StackTrace.current);
+          return left(DocumentFailure.storageFailure(failure.toString()));
+        },
+        (storageUrl) async {
+          final document = EmployeeDocument(
+            id: const Uuid().v4(),
+            employeeId: employeeId,
+            filename: filename,
+            fileType: fileExtension,
+            storageUrl: storageUrl,
+            uploadDate: DateTime.now(),
+            category: category,
+            isArchived: false,
+            expiryDate: expiryDate,
+            uploadedBy: ref.read(currentUserProvider)?.id,
+            syncStatus: SyncStatus.pending,
+          );
+          
+          final result = await documentRepository.saveDocument(document);
+          
+          result.fold(
+            (failure) => state = AsyncValue.error(failure, StackTrace.current),
+            (_) => state = AsyncValue.data(unit),
+          );
+          
+          return result.fold(
+            (failure) => left(failure),
+            (_) => right(document),
+          );
+        },
+      );
+    } catch (e, st) {
+      state = AsyncValue.error(
+        DocumentFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(DocumentFailure.unexpected(e.toString()));
+    }
+  }
+  
+  Future<Either<DocumentFailure, Unit>> deleteDocument(String documentId) async {
+    state = const AsyncValue.loading();
+    
+    try {
+      final documentRepository = ref.read(documentRepositoryProvider);
+      final document = await documentRepository.getDocumentById(documentId);
+      
+      return document.fold(
+        (failure) {
+          state = AsyncValue.error(failure, StackTrace.current);
+          return left(failure);
+        },
+        (document) async {
+          // Check if current user has permission
+          final hasPermission = await _checkDeletePermission(document);
+          if (!hasPermission) {
+            state = AsyncValue.error(
+              const DocumentFailure.insufficientPermissions(),
+              StackTrace.current,
+            );
+            return left(const DocumentFailure.insufficientPermissions());
+          }
+          
+          // Delete from storage
+          final storageRepository = ref.read(storageRepositoryProvider);
+          final storageResult = await storageRepository
+              .deleteEmployeeDocument(document.storageUrl);
+          
+          return storageResult.fold(
+            (failure) {
+              state = AsyncValue.error(failure, StackTrace.current);
+              return left(DocumentFailure.storageFailure(failure.toString()));
+            },
+            (_) async {
+              // Delete document record
+              final result = await documentRepository.deleteDocument(documentId);
+              
+              result.fold(
+                (failure) => state = AsyncValue.error(failure, StackTrace.current),
+                (_) => state = AsyncValue.data(unit),
+              );
+              
+              return result;
+            },
+          );
+        },
+      );
+    } catch (e, st) {
+      state = AsyncValue.error(
+        DocumentFailure.unexpected(e.toString()),
+        st,
+      );
+      return left(DocumentFailure.unexpected(e.toString()));
+    }
+  }
+  
+  Future<bool> _checkDeletePermission(EmployeeDocument document) async {
+    final currentUser = ref.read(currentUserProvider);
+    if (currentUser == null) return false;
+    
+    // HR Portal users can delete any document
+    if (currentUser.role == UserRole.hrPortal) return true;
+    
+    // Branch Managers can delete documents for their team members
+    if (currentUser.role == UserRole.branchManager) {
+      final teamRepository = ref.read(teamRepositoryProvider);
+      final isTeamMember = await teamRepository.isEmployeeInTeam(
+        managerId: currentUser.id,
+        employeeId: document.employeeId,
+      );
+      return isTeamMember;
+    }
+    
+    // Employees can only delete their own documents they uploaded
+    return currentUser.id == document.employeeId && 
+           currentUser.id == document.uploadedBy;
+  }
+}
+```
+
+## UI Implementation
+
+### Profile Edit Screen
+
+```dart
+class EmployeeProfileEditScreen extends ConsumerStatefulWidget {
+  final String employeeId;
+  
+  const EmployeeProfileEditScreen({
+    Key? key,
+    required this.employeeId,
+  }) : super(key: key);
+  
+  @override
+  ConsumerState<EmployeeProfileEditScreen> createState() => 
+      _EmployeeProfileEditScreenState();
+}
+
+class _EmployeeProfileEditScreenState extends 
+    ConsumerState<EmployeeProfileEditScreen> {
+  final _formKey = GlobalKey<FormBuilderState>();
+  late bool _isEditing;
+  
+  @override
+  void initState() {
+    super.initState();
+    _isEditing = false;
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    final employeeAsync = ref.watch(employeeProvider(widget.employeeId));
+    final isOffline = ref.watch(connectivityStatusProvider) == 
+        ConnectivityStatus.offline;
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Employee Profile'),
+        actions: [
+          if (isOffline)
+            const Padding(
+              padding: EdgeInsets.all(8.0),
+              child: Icon(Icons.cloud_off, color: Colors.amber),
+            ),
+          IconButton(
+            icon: Icon(_isEditing ? Icons.save : Icons.edit),
+            onPressed: () {
+              if (_isEditing) {
+                _saveProfile();
+              } else {
+                setState(() {
+                  _isEditing = true;
+                });
+              }
+            },
+          ),
+        ],
+      ),
+      body: employeeAsync.when(
+        data: (employee) => _buildForm(employee),
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(
+          child: Text('Error loading profile: $error'),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildForm(Employee employee) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: FormBuilder(
+        key: _formKey,
+        enabled: _isEditing,
+        initialValue: {
+          'firstName': employee.firstName,
+          'lastName': employee.lastName,
+          'email': employee.email,
+          'phoneNumber': employee.phoneNumber ?? '',
+          'gender': employee.gender,
+        },
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Center(
+              child: _buildProfileImage(employee),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Personal Information',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 16),
+            FormBuilderTextField(
+              name: 'firstName',
+              decoration: const InputDecoration(
+                labelText: 'First Name',
+                border: OutlineInputBorder(),
+              ),
+              validator: FormBuilderValidators.compose([
+                FormBuilderValidators.required(),
+                FormBuilderValidators.maxLength(50),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            FormBuilderTextField(
+              name: 'lastName',
+              decoration: const InputDecoration(
+                labelText: 'Last Name',
+                border: OutlineInputBorder(),
+              ),
+              validator: FormBuilderValidators.compose([
+                FormBuilderValidators.required(),
+                FormBuilderValidators.maxLength(50),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            FormBuilderTextField(
+              name: 'email',
+              decoration: const InputDecoration(
+                labelText: 'Email',
+                border: OutlineInputBorder(),
+              ),
+              validator: FormBuilderValidators.compose([
+                FormBuilderValidators.required(),
+                FormBuilderValidators.email(),
+                FormBuilderValidators.maxLength(100),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            FormBuilderTextField(
+              name: 'phoneNumber',
+              decoration: const InputDecoration(
+                labelText: 'Phone Number',
+                border: OutlineInputBorder(),
+                hintText: '+xx (xxx) xxx-xxxx',
+              ),
+              validator: FormBuilderValidators.compose([
+                FormBuilderValidators.maxLength(20),
+              ]),
+            ),
+            const SizedBox(height: 16),
+            FormBuilderDropdown<Gender>(
+              name: 'gender',
+              decoration: const InputDecoration(
+                labelText: 'Gender',
+                border: OutlineInputBorder(),
+              ),
+              items: Gender.values.map((gender) {
+                return DropdownMenuItem(
+                  value: gender,
+                  child: Text(_formatEnum(gender.toString())),
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 32),
+            _buildEmploymentDetails(employee),
+            const SizedBox(height: 32),
+            _buildDocumentSection(employee),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildProfileImage(Employee employee) {
+    final profileImageAsync = ref.watch(
+      profileImageProvider(employee.id),
+    );
+    
+    return GestureDetector(
+      onTap: _isEditing ? _updateProfileImage : null,
+      child: Stack(
+        children: [
+          Container(
+            width: 120,
+            height: 120,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: Theme.of(context).colorScheme.primary,
+                width: 2,
+              ),
+            ),
+            child: ClipOval(
+              child: profileImageAsync.when(
+                data: (imageUrl) => imageUrl != null
+                    ? CachedNetworkImage(
+                        imageUrl: imageUrl,
+                        fit: BoxFit.cover,
+                        placeholder: (context, url) => 
+                            const CircularProgressIndicator(),
+                        errorWidget: (context, url, error) => 
+                            _buildInitialsAvatar(employee),
+                      )
+                    : _buildInitialsAvatar(employee),
+                loading: () => const Center(
+                  child: CircularProgressIndicator(),
+                ),
+                error: (_, __) => _buildInitialsAvatar(employee),
+              ),
+            ),
+          ),
+          if (_isEditing)
+            Positioned(
+              bottom: 0,
+              right: 0,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.primary,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.camera_alt,
+                  color: Colors.white,
+                  size: 18,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildInitialsAvatar(Employee employee) {
+    final initials = '${employee.firstName[0]}${employee.lastName[0]}';
+    return Container(
+      color: Theme.of(context).colorScheme.secondary,
+      child: Center(
+        child: Text(
+          initials.toUpperCase(),
+          style: TextStyle(
+            color: Theme.of(context).colorScheme.onSecondary,
+            fontSize: 40,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildEmploymentDetails(Employee employee) {
+    final employmentProfileAsync = ref.watch(
+      employmentProfileProvider(employee.id),
+    );
+    
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Employment Information',
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
+        const SizedBox(height: 16),
+        employmentProfileAsync.when(
+          data: (profile) => Column(
+            children: [
+              InfoRow(
+                label: 'Employee Code',
+                value: employee.employeeCode,
+              ),
+              InfoRow(
+                label: 'Status',
+                value: _formatEnum(employee.status.toString()),
+              ),
+              InfoRow(
+                label: 'Hire Date',
+                value: DateFormat.yMMMMd().format(employee.hireDate),
+              ),
+              if (profile != null) ...[
+                InfoRow(
+                  label: 'Department',
+                  value: ref.watch(departmentNameProvider(profile.departmentId))
+                      .valueOrNull ?? '',
+                ),
+                InfoRow(
+                  label: 'Position',
+                  value: ref.watch(positionNameProvider(profile.positionId))
+                      .valueOrNull ?? '',
+                ),
+                InfoRow(
+                  label: 'Branch',
+                  value: ref.watch(branchNameProvider(profile.branchId))
+                      .valueOrNull ?? '',
+                ),
+                InfoRow(
+                  label: 'Reports To',
+                  value: ref.watch(employeeNameProvider(profile.reportingManagerId))
+                      .valueOrNull ?? '',
+                ),
+              ],
+            ],
+          ),
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (_, __) => const Text('Error loading employment details'),
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildDocumentSection(Employee employee) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Documents',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            if (_isEditing)
+              ElevatedButton.icon(
+                icon: const Icon(Icons.add),
+                label: const Text('Upload'),
+                onPressed: () => _uploadDocument(employee.id),
+              ),
+          ],
+        ),
+        const SizedBox(height: 16),
+        Consumer(
+          builder: (context, ref, child) {
+            final documentsAsync = ref.watch(
+              employeeDocumentsProvider(employee.id),
+            );
+            
+            return documentsAsync.when(
+              data: (documents) {
+                if (documents.isEmpty) {
+                  return const Center(
+                    child: Text('No documents available'),
+                  );
+                }
+                
+                return ListView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: documents.length,
+                  itemBuilder: (context, index) {
+                    final document = documents[index];
+                    return DocumentListTile(
+                      document: document,
+                      isEditing: _isEditing,
+                      onView: () => _viewDocument(document),
+                      onDelete: () => _deleteDocument(document.id),
+                    );
+                  },
+                );
+              },
+              loading: () => const Center(child: CircularProgressIndicator()),
+              error: (_, __) => const Text('Error loading documents'),
+            );
+          },
+        ),
+      ],
+    );
+  }
+  
+  void _saveProfile() async {
+    if (_formKey.currentState?.saveAndValidate() ?? false) {
+      final formData = _formKey.currentState!.value;
+      
+      final result = await ref.read(employeeProfileManagerProvider.notifier)
+          .updateEmployeeProfile(
+            employeeId: widget.employeeId,
+            firstName: formData['firstName'],
+            lastName: formData['lastName'],
+            email: formData['email'],
+            phoneNumber: formData['phoneNumber'],
+            gender: formData['gender'],
+          );
+      
+      if (mounted) {
+        result.fold(
+          (failure) => ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${failure.toString()}'),
+              backgroundColor: Colors.red,
+            ),
+          ),
+          (_) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Profile updated successfully'),
+                backgroundColor: Colors.green,
+              ),
+            );
+            setState(() {
+              _isEditing = false;
+            });
+          },
+        );
+      }
+    }
+  }
+  
+  void _updateProfileImage() async {
+    final result = await showModalBottomSheet<ImageSource>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.camera),
+              title: const Text('Take a photo'),
+              onTap: () => Navigator.pop(context, ImageSource.camera),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library),
+              title: const Text('Choose from gallery'),
+              onTap: () => Navigator.pop(context, ImageSource.gallery),
+            ),
+          ],
+        ),
+      ),
+    );
+    
+    if (result == null) return;
+    
+    final imageFile = await ImagePicker().pickImage(
+      source: result,
+      maxWidth: 800,
+      maxHeight: 800,
+      imageQuality: 85,
+    );
+    
+    if (imageFile == null) return;
+    
+    if (mounted) {
+      final uploadResult = await ref.read(profileImageManagerProvider.notifier)
+          .uploadProfileImage(
+            employeeId: widget.employeeId,
+            imageFile: File(imageFile.path),
+          );
+      
+      uploadResult.fold(
+        (failure) => ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${failure.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        ),
+        (_) => ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Profile image updated'),
+            backgroundColor: Colors.green,
+          ),
+        ),
+      );
+    }
+  }
+  
+  void _uploadDocument(String employeeId) async {
+    final result = await showModalBottomSheet<DocumentCategory>(
+      context: context,
+      builder: (context) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: DocumentCategory.values.map((category) {
+            return ListTile(
+              title: Text(_formatEnum(category.toString())),
+              onTap: () => Navigator.pop(context, category),
+            );
+          }).toList(),
+        ),
+      ),
+    );
+    
+    if (result == null) return;
+    
+    final pickedFile = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'doc', 'docx', 'jpg', 'jpeg', 'png'],
+    );
+    
+    if (pickedFile == null || pickedFile.files.single.path == null) return;
+    
+    if (mounted) {
+      final file = File(pickedFile.files.single.path!);
+      
+      DateTime? expiryDate;
+      if (result == DocumentCategory.certification) {
+        // Ask for expiry date for certifications
+        expiryDate = await showDatePicker(
+          context: context,
+          initialDate: DateTime.now().add(const Duration(days: 365)),
+          firstDate: DateTime.now(),
+          lastDate: DateTime.now().add(const Duration(days: 3650)),
+        );
+      }
+      
+      final uploadResult = await ref.read(documentManagerProvider.notifier)
+          .uploadDocument(
+            employeeId: employeeId,
+            file: file,
+            category: result,
+            expiryDate: expiryDate,
+          );
+      
+      uploadResult.fold(
+        (failure) => ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${failure.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        ),
+        (_) => ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Document uploaded successfully'),
+            backgroundColor: Colors.green,
+          ),
+        ),
+      );
+    }
+  }
+  
+  void _viewDocument(EmployeeDocument document) async {
+    final storageRepository = ref.read(storageRepositoryProvider);
+    final downloadResult = await storageRepository.getDownloadUrl(document.storageUrl);
+    
+    downloadResult.fold(
+      (failure) => ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error: ${failure.toString()}'),
+          backgroundColor: Colors.red,
+        ),
+      ),
+      (url) async {
+        // Open document viewer based on file type
+        if (['pdf', 'doc', 'docx'].contains(document.fileType)) {
+          try {
+            final tempDir = await getTemporaryDirectory();
+            final filePath = '${tempDir.path}/${document.filename}';
+            final response = await http.get(Uri.parse(url));
+            await File(filePath).writeAsBytes(response.bodyBytes);
+            await OpenFile.open(filePath);
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Error opening file: ${e.toString()}'),
+                  backgroundColor: Colors.red,
+                ),
+              );
+            }
+          }
+        } else {
+          // For images, open in a fullscreen viewer
+          if (mounted) {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => ImageViewerScreen(
+                  imageUrl: url,
+                  title: document.filename,
+                ),
+              ),
+            );
+          }
+        }
+      },
+    );
+  }
+  
+  void _deleteDocument(String documentId) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Document'),
+        content: const Text(
+          'Are you sure you want to delete this document? This action cannot be undone.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed != true) return;
+    
+    if (mounted) {
+      final result = await ref.read(documentManagerProvider.notifier)
+          .deleteDocument(documentId);
+      
+      result.fold(
+        (failure) => ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: ${failure.toString()}'),
+            backgroundColor: Colors.red,
+          ),
+        ),
+        (_) => ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Document deleted successfully'),
+            backgroundColor: Colors.green,
+          ),
+        ),
+      );
+    }
+  }
+  
+  String _formatEnum(String value) {
+    final withoutEnum = value.split('.').last;
+    return withoutEnum.split(RegExp(r'(?=[A-Z])')).map(
+      (part) => part.isEmpty 
+          ? '' 
+          : '${part[0].toUpperCase()}${part.substring(1).toLowerCase()}'
+    ).join(' ');
+  }
+}
+```
+
+## Business Rules
+
+### 1. Employee Data Management
+
+- **Personal Information**:
+  - Email addresses must be unique across the system
+  - Email format must be validated
+  - Phone numbers should be stored with country codes
+  - Names must not exceed 50 characters each
+  - Sensitive fields must have field-level encryption
+
+- **Employment Details**:
+  - Every employee must have a unique employee code
+  - Employment status changes must be tracked with effective dates
+  - Department, position, and reporting structure changes create new history records
+  - Salary information must be encrypted at rest
+  - Working hours and days can be customized per employee
+
+### 2. Document Management
+
+- **Upload Rules**:
+  - Maximum file size: 10MB per document
+  - Allowed file types: PDF, DOC, DOCX, JPG/JPEG, PNG
+  - Documents must be categorized (identification, contract, etc.)
+  - Certification documents should have expiry dates
+  - Documents must be associated with an employee ID
+
+- **Access Control**:
+  - Employees can view their own documents
+  - Branch Managers can view documents for their team members
+  - HR Portal users can view all employee documents
+  - Document deletion requires appropriate permissions
+  - Document access is recorded for audit purposes
+
+- **Storage and Retention**:
+  - Documents are stored in Firebase Storage
+  - Document metadata is stored in the local database with sync capability
+  - Expired documents are flagged but not automatically deleted
+  - Archives maintain access to historical documents
+
+### 3. Profile Image Handling
+
+- **Image Requirements**:
+  - Profile images should be no larger than 800x800 pixels
+  - Images are compressed to 85% quality for storage efficiency
+  - Multiple sizes are generated (thumbnail, standard, high-res)
+  - Images are cached locally for offline access
+
+- **Default Behavior**:
+  - When no image is available, initials are displayed
+  - Placeholder is shown while images are loading
+  - Fallback mechanism is provided for failed image loads
+
+### 4. Performance Metrics and Goals
+
+- **Goal Management**:
+  - Goals must have clear titles, descriptions, and due dates
+  - Progress percentage must be tracked (0-100%)
+  - Goals can be individual, team, or organizational
+  - Goals require assignment source tracking
+
+- **Performance Reviews**:
+  - Reviews must be linked to relevant performance period
+  - Reviews require manager input and employee acknowledgment
+  - Documentation can be attached to specific reviews
+  - Review history must be maintained for the employee's tenure
+
+### 5. Skills and Certifications
+
+- **Skills Management**:
+  - Skills should be standardized and selectable from a predefined list
+  - Custom skills require HR review before addition to the system
+  - Skill levels can be assigned (beginner, intermediate, expert)
+
+- **Certification Tracking**:
+  - Certifications must have valid start and expiry dates
+  - Expiring certifications trigger notifications
+  - Certification documents can be attached as verification
+  - Renewal process is tracked for required certifications
+
+## Repositories
+
+### Employee Repository
+
+```dart
+abstract class EmployeeRepository {
+  /// Get an employee by ID
+  Future<Either<EmployeeFailure, Employee>> getEmployeeById(String id);
+  
+  /// Find an employee by email (returns null if not found)
+  Future<Either<EmployeeFailure, Employee?>> findEmployeeByEmail(String email);
+  
+  /// Update employee information
+  Future<Either<EmployeeFailure, Employee>> updateEmployee(Employee employee);
+  
+  /// Get all employees (with optional filters and pagination)
+  Future<Either<EmployeeFailure, List<Employee>>> getEmployees({
+    String? departmentId,
+    String? branchId,
+    EmploymentStatus? status,
+    int? page,
+    int? pageSize,
+  });
+  
+  /// Get employees by manager ID
+  Future<Either<EmployeeFailure, List<Employee>>> getTeamMembers(String managerId);
+  
+  /// Get employees by multiple IDs
+  Future<Either<EmployeeFailure, List<Employee>>> getEmployeesByIds(List<String> ids);
+  
+  /// Watch changes to an employee
+  Stream<Employee> watchEmployee(String id);
+}
+```
+
+### Employment Profile Repository
+
+```dart
+abstract class EmploymentProfileRepository {
+  /// Get employment profile for an employee
+  Future<Either<EmploymentFailure, EmploymentProfile?>> getEmploymentProfile(
+    String employeeId,
+  );
+  
+  /// Get employment history for an employee
+  Future<Either<EmploymentFailure, List<EmploymentProfile>>> getEmploymentHistory(
+    String employeeId,
+  );
+  
+  /// Update employment profile
+  Future<Either<EmploymentFailure, EmploymentProfile>> updateEmploymentProfile(
+    EmploymentProfile profile,
+  );
+  
+  /// Create a new employment profile (for position changes, transfers, etc.)
+  Future<Either<EmploymentFailure, EmploymentProfile>> createEmploymentProfile(
+    EmploymentProfile profile,
+  );
+  
+  /// Get current salary with decryption for authorized users
+  Future<Either<EmploymentFailure, Salary?>> getCurrentSalary(
+    String employeeId,
+  );
+  
+  /// Update salary information (creates new record with effective date)
+  Future<Either<EmploymentFailure, Unit>> updateSalary({
+    required String employeeId, 
+    required double amount,
+    required String currencyCode,
+    required SalaryFrequency frequency,
+    required DateTime effectiveDate,
+    required String approvedBy,
+  });
+}
+```
+
+### Document Repository
+
+```dart
+abstract class DocumentRepository {
+  /// Save a new document record
+  Future<Either<DocumentFailure, Unit>> saveDocument(EmployeeDocument document);
+  
+  /// Get document by ID
+  Future<Either<DocumentFailure, EmployeeDocument>> getDocumentById(String id);
+  
+  /// Get documents for an employee
+  Future<Either<DocumentFailure, List<EmployeeDocument>>> getEmployeeDocuments({
+    required String employeeId,
+    DocumentCategory? category,
+    bool includeArchived = false,
+  });
+  
+  /// Update document metadata
+  Future<Either<DocumentFailure, Unit>> updateDocument(
+    EmployeeDocument document,
+  );
+  
+  /// Mark document as archived
+  Future<Either<DocumentFailure, Unit>> archiveDocument(String documentId);
+  
+  /// Delete document record
+  Future<Either<DocumentFailure, Unit>> deleteDocument(String documentId);
+  
+  /// Get soon-to-expire documents
+  Future<Either<DocumentFailure, List<EmployeeDocument>>> getExpiringDocuments({
+    required Duration threshold,
+    DocumentCategory? category,
+  });
+  
+  /// Watch documents for an employee
+  Stream<List<EmployeeDocument>> watchEmployeeDocuments(
+    String employeeId, {
+    DocumentCategory? category,
+    bool includeArchived = false,
+  });
+}
+```
+
+### Storage Repository
+
+```dart
+abstract class StorageRepository {
+  /// Upload employee document to Firebase Storage
+  Future<Either<StorageFailure, String>> uploadEmployeeDocument({
+    required String employeeId,
+    required File file,
+    required String filename,
+  });
+  
+  /// Upload employee profile image
+  Future<Either<StorageFailure, String>> uploadProfileImage({
+    required String employeeId,
+    required File imageFile,
+  });
+  
+  /// Get download URL for a storage path
+  Future<Either<StorageFailure, String>> getDownloadUrl(String storagePath);
+  
+  /// Delete file from Firebase Storage
+  Future<Either<StorageFailure, Unit>> deleteEmployeeDocument(String storagePath);
+  
+  /// Delete profile image
+  Future<Either<StorageFailure, Unit>> deleteProfileImage(String employeeId);
+}
+```
+
+## Testing Guidelines
+
+### 1. Unit Testing Employee Validation
+
+```dart
+void main() {
+  late EmployeeValidator validator;
+  late MockEmployeeRepository mockEmployeeRepository;
+  
+  setUp(() {
+    mockEmployeeRepository = MockEmployeeRepository();
+    validator = EmployeeValidator(mockEmployeeRepository);
+  });
+  
+  group('EmployeeValidator', () {
+    test('should validate email format', () {
+      // Arrange
+      const validEmail = 'john.doe@example.com';
+      const invalidEmail = 'not-an-email';
+      
+      // Act & Assert
+      expect(validator.isValidEmail(validEmail), true);
+      expect(validator.isValidEmail(invalidEmail), false);
+    });
+    
+    test('should check email uniqueness', () async {
+      // Arrange
+      const email = 'john.doe@example.com';
+      const employeeId = 'emp-123';
+      
+      when(() => mockEmployeeRepository.findEmployeeByEmail(email))
+          .thenAnswer((_) async => right(null));
+      
+      // Act
+      final result = await validator.isEmailUnique(email, employeeId);
+      
+      // Assert
+      expect(result, true);
+    });
+    
+    test('should fail uniqueness check when email belongs to another employee', () async {
+      // Arrange
+      const email = 'john.doe@example.com';
+      const employeeId = 'emp-123';
+      
+      when(() => mockEmployeeRepository.findEmployeeByEmail(email))
+          .thenAnswer((_) async => right(
+            Employee(
+              id: 'emp-456', // Different employee
+              firstName: 'John',
+              lastName: 'Doe',
+              email: email,
+              dateOfBirth: DateTime(1990, 1, 1),
+              gender: Gender.male,
+              employeeCode: 'EMP-456',
+              status: EmploymentStatus.active,
+              hireDate: DateTime(2022, 1, 1),
+              syncStatus: SyncStatus.synced,
+            ),
+          ));
+      
+      // Act
+      final result = await validator.isEmailUnique(email, employeeId);
+      
+      // Assert
+      expect(result, false);
+    });
+    
+    // More validation tests
+  });
+}
+```
+
+### 2. Widget Testing Document Upload
+
+```dart
+void main() {
+  testWidgets('DocumentUploadWidget shows proper UI flow for document upload', 
+    (WidgetTester tester) async {
+      // Arrange
+      final mockDocumentManager = MockDocumentManager();
+      final mockStorageRepository = MockStorageRepository();
+      
+      when(() => mockDocumentManager.uploadDocument(
+        employeeId: any(named: 'employeeId'),
+        file: any(named: 'file'),
+        category: any(named: 'category'),
+        expiryDate: any(named: 'expiryDate'),
+      )).thenAnswer((_) async => right(
+        EmployeeDocument(
+          id: 'doc-123',
+          employeeId: 'emp-123',
+          filename: 'test.pdf',
+          fileType: 'pdf',
+          storageUrl: 'path/to/file.pdf',
+          uploadDate: DateTime.now(),
+          category: DocumentCategory.identification,
+          isArchived: false,
+          syncStatus: SyncStatus.synced,
+        ),
+      ));
+      
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            documentManagerProvider.overrideWithValue(mockDocumentManager),
+            storageRepositoryProvider.overrideWithValue(mockStorageRepository),
+          ],
+          child: MaterialApp(
+            home: Scaffold(
+              body: DocumentUploadWidget(employeeId: 'emp-123'),
+            ),
+          ),
+        ),
+      );
+      
+      // Assert initial state
+      expect(find.text('Upload Document'), findsOneWidget);
+      expect(find.text('Select Document Category'), findsOneWidget);
+      
+      // Act - select category
+      await tester.tap(find.byType(DropdownButton<DocumentCategory>));
+      await tester.pumpAndSettle();
+      
+      await tester.tap(find.text('Identification').last);
+      await tester.pumpAndSettle();
+      
+      // Assert category selected
+      expect(find.text('Identification'), findsOneWidget);
+      
+      // Act - tap upload button (FilePicker would normally show here)
+      await tester.tap(find.text('Select File'));
+      await tester.pumpAndSettle();
+      
+      // Mock file selection
+      verify(() => mockDocumentManager.uploadDocument(
+        employeeId: 'emp-123',
+        file: any(named: 'file'),
+        category: DocumentCategory.identification,
+        expiryDate: null,
+      )).called(1);
+      
+      // Verify success message
+      expect(find.text('Document uploaded successfully'), findsOneWidget);
+    },
+  );
+  
+  // More widget tests
+}
+```
+
+## Implementation Best Practices
+
+### 1. Security First
+
+- Always use field-level encryption for sensitive data
+- Restrict document access based on user roles
+- Validate file uploads for size and type
+- Implement proper authentication before showing personal data
+- Sanitize all inputs to prevent injection attacks
+
+### 2. Offline Support
+
+- Cache profile data for offline viewing
+- Store profile images locally after fetching
+- Implement optimistic UI updates for profile changes
+- Clear sync indicators for changes pending upload
+- Handle sync conflicts with proper conflict resolution
+
+### 3. Performance
+
+- Optimize image loading and caching
+- Implement lazy loading for document lists
+- Use pagination for retrieving employee lists
+- Cache frequently accessed data (departments, positions)
+- Reuse widgets to reduce memory consumption
+
+### 4. UX Considerations
+
+- Show loading states during data fetching
+- Provide clear error messages for validation failures
+- Implement intuitive document management interface
+- Add clear offline indicators when connectivity is lost
+- Design responsive layouts for all screen sizes
+
+### 5. Cross-Feature Integration
+
+- Properly link employee profiles with attendance records
+- Integrate with leave management for status updates
+- Connect performance goals with team management
+- Ensure proper permissions for document access
+
+- Support profile syncing with administrative portals

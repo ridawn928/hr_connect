@@ -1,0 +1,981 @@
+---
+description: Enforces robust authentication and security practices for HR Connect, including JWT token management, secure storage, role-based access control, and field-level encryption.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces robust authentication and security practices for HR Connect, including JWT token management, secure storage, role-based access control, and field-level encryption.
+globs: **/auth/**/*.dart,**/security/**/*.dart,**/authentication/**/*.dart
+alwaysApply: false
+---
+
+# Authentication and Security
+
+This rule provides guidance for implementing robust authentication and security mechanisms in the HR Connect application, focusing on JWT-based authentication, secure storage, and role-based access control.
+
+## Overview
+
+HR Connect implements a comprehensive security framework with:
+- JWT-based authentication with refresh mechanism
+- Role-based access control (RBAC) with four distinct roles
+- Secure storage of tokens and sensitive information
+- Field-level encryption for sensitive employee data
+- Multi-factor authentication for administrative accounts
+- Device verification and management (max 2 devices per employee)
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Authentication
+  dart_jsonwebtoken: ^3.2.0  # JWT token handling
+  local_auth: ^2.1.6         # Biometric authentication
+  flutter_secure_storage: ^9.2.4  # Secure token storage
+  
+  # Encryption
+  encrypt: ^5.0.1            # Field-level encryption
+  
+  # Security
+  uuid: ^3.0.7               # Unique ID generation
+  dio: ^5.3.3                # HTTP client with interceptors
+  
+  # Optional Firebase Authentication
+  firebase_auth: ^5.5.2      # Optional social login integration
+```
+
+## Core Authentication Components
+
+### Authentication Token Model
+
+```dart
+/// Model representing authentication tokens with expiry information
+@freezed
+class AuthTokens with _$AuthTokens {
+  const factory AuthTokens({
+    required String accessToken,
+    required String refreshToken,
+    required DateTime accessTokenExpiry,
+    required DateTime refreshTokenExpiry,
+  }) = _AuthTokens;
+  
+  factory AuthTokens.fromJson(Map<String, dynamic> json) => 
+      _$AuthTokensFromJson(json);
+  
+  /// Business rule: Check if access token is expired
+  bool get isAccessTokenExpired => 
+      accessTokenExpiry.isBefore(DateTime.now());
+  
+  /// Business rule: Check if refresh token is expired
+  bool get isRefreshTokenExpired => 
+      refreshTokenExpiry.isBefore(DateTime.now());
+  
+  /// Business rule: Check if tokens are about to expire (within 5 minutes)
+  bool get isAccessTokenExpiringShortly => 
+      accessTokenExpiry.difference(DateTime.now()).inMinutes < 5;
+}
+```
+
+### JWT Handling Service
+
+```dart
+/// Service for handling JWT tokens
+class JwtService {
+  /// Decode and verify access token
+  Either<AuthFailure, Map<String, dynamic>> verifyAccessToken(String token) {
+    try {
+      final jwt = JWT.verify(
+        token, 
+        SecretKey('your-signing-key'), // Use env config for real key
+      );
+      return Right(jwt.payload);
+    } on JWTExpiredException {
+      return Left(const AuthFailure.tokenExpired());
+    } on JWTException catch (e) {
+      return Left(AuthFailure.invalidToken(e.message));
+    }
+  }
+  
+  /// Create a new access token
+  String generateAccessToken(User user, List<String> roles) {
+    final jwt = JWT(
+      {
+        'sub': user.id,
+        'email': user.email,
+        'roles': roles,
+        'iat': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      },
+    );
+    
+    // Access tokens expire after 8 hours of inactivity as per requirements
+    return jwt.sign(
+      SecretKey('your-signing-key'), // Use env config for real key
+      expiresIn: const Duration(hours: 8),
+    );
+  }
+  
+  /// Create a new refresh token
+  String generateRefreshToken(User user) {
+    final jwt = JWT(
+      {
+        'sub': user.id,
+        'type': 'refresh',
+        'iat': DateTime.now().millisecondsSinceEpoch ~/ 1000,
+      },
+    );
+    
+    // Refresh tokens expire after 7 days as per offline limit requirement
+    return jwt.sign(
+      SecretKey('your-refresh-signing-key'), // Use env config for real key
+      expiresIn: const Duration(days: 7),
+    );
+  }
+}
+```
+
+### Secure Storage Service
+
+```dart
+/// Service for securely storing sensitive information
+class SecureStorageService {
+  final FlutterSecureStorage _secureStorage;
+  
+  SecureStorageService(this._secureStorage);
+  
+  /// Store authentication tokens securely
+  Future<void> storeAuthTokens(AuthTokens tokens) async {
+    await _secureStorage.write(key: 'access_token', value: tokens.accessToken);
+    await _secureStorage.write(key: 'refresh_token', value: tokens.refreshToken);
+    await _secureStorage.write(
+      key: 'access_token_expiry',
+      value: tokens.accessTokenExpiry.toIso8601String(),
+    );
+    await _secureStorage.write(
+      key: 'refresh_token_expiry',
+      value: tokens.refreshTokenExpiry.toIso8601String(),
+    );
+  }
+  
+  /// Retrieve stored authentication tokens
+  Future<Either<AuthFailure, AuthTokens>> getAuthTokens() async {
+    try {
+      final accessToken = await _secureStorage.read(key: 'access_token');
+      final refreshToken = await _secureStorage.read(key: 'refresh_token');
+      final accessTokenExpiryStr = await _secureStorage.read(
+        key: 'access_token_expiry',
+      );
+      final refreshTokenExpiryStr = await _secureStorage.read(
+        key: 'refresh_token_expiry',
+      );
+      
+      if (accessToken == null || refreshToken == null || 
+          accessTokenExpiryStr == null || refreshTokenExpiryStr == null) {
+        return Left(const AuthFailure.noStoredTokens());
+      }
+      
+      return Right(AuthTokens(
+        accessToken: accessToken,
+        refreshToken: refreshToken,
+        accessTokenExpiry: DateTime.parse(accessTokenExpiryStr),
+        refreshTokenExpiry: DateTime.parse(refreshTokenExpiryStr),
+      ));
+    } catch (e) {
+      return Left(AuthFailure.storageError(e.toString()));
+    }
+  }
+  
+  /// Delete stored tokens on logout
+  Future<void> clearAuthTokens() async {
+    await _secureStorage.delete(key: 'access_token');
+    await _secureStorage.delete(key: 'refresh_token');
+    await _secureStorage.delete(key: 'access_token_expiry');
+    await _secureStorage.delete(key: 'refresh_token_expiry');
+  }
+  
+  /// Store encrypted sensitive data
+  Future<void> storeEncryptedData(String key, String value) async {
+    final encryptionService = EncryptionService();
+    final encryptedValue = encryptionService.encrypt(value);
+    await _secureStorage.write(key: key, value: encryptedValue);
+  }
+  
+  /// Retrieve and decrypt sensitive data
+  Future<Either<SecurityFailure, String>> getEncryptedData(String key) async {
+    try {
+      final encryptedValue = await _secureStorage.read(key: key);
+      
+      if (encryptedValue == null) {
+        return Left(const SecurityFailure.dataNotFound());
+      }
+      
+      final encryptionService = EncryptionService();
+      final decryptedValue = encryptionService.decrypt(encryptedValue);
+      
+      return Right(decryptedValue);
+    } catch (e) {
+      return Left(SecurityFailure.decryptionError(e.toString()));
+    }
+  }
+}
+```
+
+### Authentication Repository
+
+```dart
+/// Repository for handling authentication
+class AuthenticationRepository {
+  final SecureStorageService _secureStorage;
+  final AuthApiService _authApiService;
+  final JwtService _jwtService;
+  
+  AuthenticationRepository(
+    this._secureStorage,
+    this._authApiService,
+    this._jwtService,
+  );
+  
+  /// Login with credentials
+  Future<Either<AuthFailure, User>> login(String email, String password) async {
+    try {
+      final result = await _authApiService.login(email, password);
+      
+      return result.fold(
+        (failure) => Left(failure),
+        (tokens) async {
+          // Store tokens securely
+          await _secureStorage.storeAuthTokens(tokens);
+          
+          // Get user from token payload
+          final payloadResult = _jwtService.verifyAccessToken(tokens.accessToken);
+          
+          return payloadResult.fold(
+            (failure) => Left(failure),
+            (payload) {
+              // Create user from payload
+              final user = User(
+                id: payload['sub'] as String,
+                email: payload['email'] as String,
+                roles: List<String>.from(payload['roles']),
+              );
+              
+              return Right(user);
+            },
+          );
+        },
+      );
+    } catch (e) {
+      return Left(AuthFailure.unexpectedError(e.toString()));
+    }
+  }
+  
+  /// Get current authenticated user
+  Future<Either<AuthFailure, User>> getCurrentUser() async {
+    final tokensResult = await _secureStorage.getAuthTokens();
+    
+    return tokensResult.fold(
+      (failure) => Left(failure),
+      (tokens) {
+        if (tokens.isAccessTokenExpired) {
+          if (tokens.isRefreshTokenExpired) {
+            return Left(const AuthFailure.sessionExpired());
+          }
+          // Handle token refresh
+          return _refreshToken(tokens.refreshToken);
+        }
+        
+        final payloadResult = _jwtService.verifyAccessToken(tokens.accessToken);
+        
+        return payloadResult.fold(
+          (failure) => Left(failure),
+          (payload) {
+            final user = User(
+              id: payload['sub'] as String,
+              email: payload['email'] as String,
+              roles: List<String>.from(payload['roles']),
+            );
+            
+            return Right(user);
+          },
+        );
+      },
+    );
+  }
+  
+  /// Refresh authentication token
+  Future<Either<AuthFailure, User>> _refreshToken(String refreshToken) async {
+    try {
+      final result = await _authApiService.refreshToken(refreshToken);
+      
+      return result.fold(
+        (failure) => Left(failure),
+        (tokens) async {
+          // Store new tokens
+          await _secureStorage.storeAuthTokens(tokens);
+          
+          // Get user from new token
+          final payloadResult = _jwtService.verifyAccessToken(tokens.accessToken);
+          
+          return payloadResult.fold(
+            (failure) => Left(failure),
+            (payload) {
+              final user = User(
+                id: payload['sub'] as String,
+                email: payload['email'] as String,
+                roles: List<String>.from(payload['roles']),
+              );
+              
+              return Right(user);
+            },
+          );
+        },
+      );
+    } catch (e) {
+      return Left(AuthFailure.unexpectedError(e.toString()));
+    }
+  }
+  
+  /// Logout user
+  Future<void> logout() async {
+    await _secureStorage.clearAuthTokens();
+  }
+}
+```
+
+## Role-Based Access Control
+
+### Role and Permission Model
+
+```dart
+/// Enumeration of available roles in HR Connect
+enum UserRole {
+  employee,        // Base role for all users
+  branchManager,   // Team management capabilities
+  payrollPortal,   // Administrative interface for payroll
+  hrPortal,        // System administration interface
+}
+
+/// Extension to add capabilities to UserRole
+extension UserRoleX on UserRole {
+  String get name {
+    switch (this) {
+      case UserRole.employee:
+        return 'Employee';
+      case UserRole.branchManager:
+        return 'Branch Manager';
+      case UserRole.payrollPortal:
+        return 'Payroll Portal';
+      case UserRole.hrPortal:
+        return 'HR Portal';
+    }
+  }
+  
+  String get code {
+    switch (this) {
+      case UserRole.employee:
+        return 'E';
+      case UserRole.branchManager:
+        return 'BM';
+      case UserRole.payrollPortal:
+        return 'PP';
+      case UserRole.hrPortal:
+        return 'HP';
+    }
+  }
+  
+  /// Check if this role has the permission to perform an action
+  bool hasPermission(Permission permission) {
+    switch (this) {
+      case UserRole.employee:
+        return _employeePermissions.contains(permission);
+      case UserRole.branchManager:
+        return _branchManagerPermissions.contains(permission);
+      case UserRole.payrollPortal:
+        return _payrollPortalPermissions.contains(permission);
+      case UserRole.hrPortal:
+        return _hrPortalPermissions.contains(permission);
+    }
+  }
+  
+  // Permission sets for each role based on RBAC matrix
+  static const Set<Permission> _employeePermissions = {
+    Permission.viewOwnCoreProfile,
+    Permission.editOwnCoreProfile,
+    Permission.loginWithCredentials,
+    Permission.changeOwnPassword,
+    Permission.registerPersonalDevice,
+    Permission.viewOwnRegisteredDevices,
+    Permission.deactivateOwnDevices,
+    // ...additional permissions...
+  };
+  
+  static const Set<Permission> _branchManagerPermissions = {
+    // Include all employee permissions
+    ..._employeePermissions,
+    
+    // Additional manager permissions
+    Permission.viewTeamMemberCoreProfiles,
+    Permission.editTeamMemberCoreProfiles,
+    Permission.viewLoginHistory,
+    Permission.viewTeamDeviceRegistrations,
+    Permission.deactivateTeamMemberDevices,
+    // ...additional permissions...
+  };
+  
+  // Additional permission sets...
+}
+
+/// Enumeration of permissions in HR Connect
+enum Permission {
+  // Employee Core Data permissions
+  viewOwnCoreProfile,
+  editOwnCoreProfile,
+  viewTeamMemberCoreProfiles,
+  editTeamMemberCoreProfiles,
+  createNewEmployeeCoreProfiles,
+  deactivateEmployeeAccounts,
+  viewOrganizationWideEmployeeData,
+  manageBiDirectionalManagerRelationships,
+  
+  // Authentication & Security permissions
+  loginWithCredentials,
+  changeOwnPassword,
+  resetOtherUserPasswords,
+  viewLoginHistory,
+  configureSecurityPolicies,
+  assignModifyUserRoles,
+  grantRevokePayrollPortalAccess,
+  manageOfflineAccessPolicies,
+  
+  // Additional permissions for other areas...
+}
+```
+
+### Permission Guard Component
+
+```dart
+/// Widget that conditionally renders children based on permissions
+class PermissionGuard extends StatelessWidget {
+  final Permission requiredPermission;
+  final Widget child;
+  final Widget? fallback;
+  
+  const PermissionGuard({
+    required this.requiredPermission,
+    required this.child,
+    this.fallback,
+    super.key,
+  });
+  
+  @override
+  Widget build(BuildContext context) {
+    // Get current user's role from authentication provider
+    return Consumer(
+      builder: (context, ref, _) {
+        final authState = ref.watch(authStateProvider);
+        
+        return authState.maybeWhen(
+          authenticated: (user) {
+            // Check if user has the required permission
+            final hasPermission = user.roles.any((roleStr) {
+              final role = UserRole.values.firstWhere(
+                (r) => r.name == roleStr,
+                orElse: () => UserRole.employee,
+              );
+              return role.hasPermission(requiredPermission);
+            });
+            
+            if (hasPermission) {
+              return child;
+            } else {
+              return fallback ?? const SizedBox.shrink();
+            }
+          },
+          orElse: () => fallback ?? const SizedBox.shrink(),
+        );
+      },
+    );
+  }
+}
+
+// Usage example
+Widget build(BuildContext context) {
+  return Scaffold(
+    body: Column(
+      children: [
+        // Always visible to all users
+        const WelcomeHeader(),
+        
+        // Only visible to users with specific permission
+        PermissionGuard(
+          requiredPermission: Permission.viewOrganizationWideEmployeeData,
+          child: const OrganizationWideDataReport(),
+          fallback: const AccessRestrictedMessage(),
+        ),
+      ],
+    ),
+  );
+}
+```
+
+## Field-Level Encryption
+
+```dart
+/// Service for encrypting sensitive data
+class EncryptionService {
+  // In a real implementation, get these from secure environment variables
+  static const String _keyString = 'YourEncryptionKeyHere12345678901234567';
+  static const String _ivString = 'YourInitVectorHr';
+  
+  final Key _key;
+  final IV _iv;
+  final Encrypter _encrypter;
+  
+  /// Create encryption service with secure key and IV
+  EncryptionService()
+      : _key = Key.fromUtf8(_keyString),
+        _iv = IV.fromUtf8(_ivString),
+        _encrypter = Encrypter(AES(_key, mode: AESMode.cbc));
+  
+  /// Encrypt sensitive data
+  String encrypt(String plainText) {
+    final encrypted = _encrypter.encrypt(plainText, iv: _iv);
+    return encrypted.base64;
+  }
+  
+  /// Decrypt sensitive data
+  String decrypt(String encryptedText) {
+    final encrypted = Encrypted.fromBase64(encryptedText);
+    return _encrypter.decrypt(encrypted, iv: _iv);
+  }
+}
+
+/// Example of a salary value object with encryption
+@freezed
+class EmployeeSalary with _$EmployeeSalary {
+  const EmployeeSalary._();
+  
+  const factory EmployeeSalary({
+    required String encryptedValue,
+  }) = _EmployeeSalary;
+  
+  /// Create an encrypted salary from plain value
+  factory EmployeeSalary.encrypt(double value) {
+    final encryptionService = EncryptionService();
+    final encrypted = encryptionService.encrypt(value.toString());
+    return EmployeeSalary(encryptedValue: encrypted);
+  }
+  
+  /// Decrypt the salary value
+  double decrypt() {
+    final encryptionService = EncryptionService();
+    final decrypted = encryptionService.decrypt(encryptedValue);
+    return double.parse(decrypted);
+  }
+}
+```
+
+## Authenticated API Client
+
+```dart
+/// Provider for the authenticated DIO HTTP client
+final authenticatedClientProvider = Provider<Dio>((ref) {
+  final dio = Dio(BaseOptions(
+    baseUrl: 'https://api.hrconnect.example.com',
+    connectTimeout: const Duration(seconds: 30),
+    receiveTimeout: const Duration(seconds: 30),
+  ));
+  
+  // Add authentication interceptor
+  dio.interceptors.add(AuthInterceptor(ref));
+  
+  return dio;
+});
+
+/// Authentication interceptor for adding JWT tokens to requests
+class AuthInterceptor extends Interceptor {
+  final Ref _ref;
+  
+  AuthInterceptor(this._ref);
+  
+  @override
+  void onRequest(
+    RequestOptions options, 
+    RequestInterceptorHandler handler,
+  ) async {
+    // Get auth repository from provider
+    final authRepository = _ref.read(authRepositoryProvider);
+    
+    // Get current user (which includes fresh token handling)
+    final userResult = await authRepository.getCurrentUser();
+    
+    userResult.fold(
+      (failure) {
+        // If authentication failed, proceed without token
+        handler.next(options);
+      },
+      (user) async {
+        // Get fresh token
+        final tokensResult = await _ref.read(secureStorageProvider)
+            .getAuthTokens();
+        
+        tokensResult.fold(
+          (failure) {
+            // If token retrieval failed, proceed without token
+            handler.next(options);
+          },
+          (tokens) {
+            // Add token to request header
+            options.headers['Authorization'] = 'Bearer ${tokens.accessToken}';
+            handler.next(options);
+          },
+        );
+      },
+    );
+  }
+  
+  @override
+  void onError(DioException err, ErrorInterceptorHandler handler) async {
+    // Handle 401 Unauthorized errors by attempting token refresh
+    if (err.response?.statusCode == 401) {
+      // Get auth repository
+      final authRepository = _ref.read(authRepositoryProvider);
+      
+      // Get tokens
+      final tokensResult = await _ref.read(secureStorageProvider)
+          .getAuthTokens();
+      
+      await tokensResult.fold(
+        (failure) {
+          // If no tokens available, pass error along
+          handler.next(err);
+        },
+        (tokens) async {
+          if (!tokens.isRefreshTokenExpired) {
+            try {
+              // Try to refresh token and retry request
+              final refreshResult = await authRepository.refreshToken(
+                tokens.refreshToken,
+              );
+              
+              refreshResult.fold(
+                (failure) {
+                  // If refresh failed, pass error along
+                  handler.next(err);
+                },
+                (newTokens) async {
+                  // Retry the request with new token
+                  final opts = err.requestOptions;
+                  opts.headers['Authorization'] = 
+                      'Bearer ${newTokens.accessToken}';
+                  
+                  try {
+                    final response = await _ref.read(dioProvider)
+                        .fetch(opts);
+                    handler.resolve(response);
+                  } catch (e) {
+                    handler.next(err);
+                  }
+                },
+              );
+            } catch (e) {
+              handler.next(err);
+            }
+          } else {
+            // Refresh token expired, user needs to login again
+            handler.next(err);
+          }
+        },
+      );
+    } else {
+      handler.next(err);
+    }
+  }
+}
+```
+
+## Device Verification and Management
+
+```dart
+/// Model representing a registered device
+@freezed
+class AuthDevice with _$AuthDevice {
+  const factory AuthDevice({
+    required String deviceId,
+    required String deviceName,
+    required DateTime registeredAt,
+    required bool isVerified,
+    String? lastIpAddress,
+    DateTime? lastLoginTime,
+  }) = _AuthDevice;
+  
+  factory AuthDevice.fromJson(Map<String, dynamic> json) => 
+      _$AuthDeviceFromJson(json);
+}
+
+/// Repository for device management
+class DeviceRepository {
+  final SecureStorageService _secureStorage;
+  final DeviceApiService _deviceApiService;
+  
+  DeviceRepository(this._secureStorage, this._deviceApiService);
+  
+  /// Register a new device
+  Future<Either<DeviceFailure, AuthDevice>> registerDevice(
+    String userId,
+    String deviceName,
+  ) async {
+    try {
+      // Generate a unique device ID
+      final deviceId = const Uuid().v4();
+      
+      // Store device ID securely
+      await _secureStorage.write(key: 'device_id', value: deviceId);
+      
+      // Register with API
+      final result = await _deviceApiService.registerDevice(
+        userId,
+        deviceId,
+        deviceName,
+      );
+      
+      return result;
+    } catch (e) {
+      return Left(DeviceFailure.unexpectedError(e.toString()));
+    }
+  }
+  
+  /// Get current device ID from secure storage
+  Future<Either<DeviceFailure, String>> getCurrentDeviceId() async {
+    try {
+      final deviceId = await _secureStorage.read(key: 'device_id');
+      
+      if (deviceId == null) {
+        return Left(const DeviceFailure.noRegisteredDevice());
+      }
+      
+      return Right(deviceId);
+    } catch (e) {
+      return Left(DeviceFailure.unexpectedError(e.toString()));
+    }
+  }
+  
+  /// Verify device with server
+  Future<Either<DeviceFailure, AuthDevice>> verifyDevice(
+    String userId,
+    String deviceId,
+  ) async {
+    try {
+      return _deviceApiService.verifyDevice(userId, deviceId);
+    } catch (e) {
+      return Left(DeviceFailure.unexpectedError(e.toString()));
+    }
+  }
+  
+  /// Deactivate device
+  Future<Either<DeviceFailure, Unit>> deactivateDevice(
+    String userId,
+    String deviceId,
+  ) async {
+    try {
+      return _deviceApiService.deactivateDevice(userId, deviceId);
+    } catch (e) {
+      return Left(DeviceFailure.unexpectedError(e.toString()));
+    }
+  }
+}
+```
+
+## Multi-Factor Authentication
+
+```dart
+/// Service for handling multi-factor authentication
+class MultifactorAuthService {
+  final LocalAuthentication _localAuth;
+  final SecureStorageService _secureStorage;
+  
+  MultifactorAuthService(this._localAuth, this._secureStorage);
+  
+  /// Check if device supports biometric authentication
+  Future<bool> isBiometricAvailable() async {
+    final canAuthenticate = await _localAuth.canCheckBiometrics;
+    final isDeviceSupported = await _localAuth.isDeviceSupported();
+    return canAuthenticate && isDeviceSupported;
+  }
+  
+  /// Authenticate using biometrics
+  Future<bool> authenticateWithBiometrics() async {
+    try {
+      return await _localAuth.authenticate(
+        localizedReason: 'Authenticate to access HR Connect',
+        options: const AuthenticationOptions(
+          stickyAuth: true,
+          biometricOnly: true,
+        ),
+      );
+    } catch (e) {
+      return false;
+    }
+  }
+  
+  /// Generate backup codes for account recovery
+  Future<Either<SecurityFailure, List<String>>> generateBackupCodes() async {
+    try {
+      final codes = List.generate(
+        10,
+        (_) => const Uuid().v4().substring(0, 8).toUpperCase(),
+      );
+      
+      // Encrypt and store backup codes
+      final encryptionService = EncryptionService();
+      final encryptedCodes = codes.map(encryptionService.encrypt).toList();
+      
+      await _secureStorage.write(
+        key: 'backup_codes',
+        value: jsonEncode(encryptedCodes),
+      );
+      
+      return Right(codes);
+    } catch (e) {
+      return Left(SecurityFailure.unexpectedError(e.toString()));
+    }
+  }
+  
+  /// Verify backup code
+  Future<bool> verifyBackupCode(String code) async {
+    try {
+      final storedCodesJson = await _secureStorage.read(key: 'backup_codes');
+      
+      if (storedCodesJson == null) {
+        return false;
+      }
+      
+      final encryptedCodes = List<String>.from(jsonDecode(storedCodesJson));
+      final encryptionService = EncryptionService();
+      
+      // Check if provided code matches any stored code
+      return encryptedCodes.any((encrypted) {
+        final decrypted = encryptionService.decrypt(encrypted);
+        return decrypted == code;
+      });
+    } catch (e) {
+      return false;
+    }
+  }
+}
+```
+
+## Business Rules
+
+### Authentication
+- JWT tokens expire after 8 hours of inactivity
+- Refresh tokens are valid for 7 days (matching offline limit)
+- Account locks after 5 failed login attempts
+- Password complexity requirements:
+  - Minimum 8 characters
+  - At least one uppercase letter
+  - At least one number
+  - At least one special character
+
+### Device Management
+- Maximum 2 devices per employee
+- Device verification required on first login
+- Device information stored for audit purposes
+- Deactivated devices cannot be reactivated
+
+### Role-Based Access
+- Four roles with hierarchical permissions:
+  - Employee (base role)
+  - Branch Manager (extends Employee)
+  - Payroll Portal (admin interface)
+  - HR Portal (system admin)
+- Permissions must be checked at UI, API, and data levels
+- HR Portal can override all permissions
+
+### Data Security
+- Sensitive data must be encrypted at rest
+- Authentication tokens stored in secure storage
+- Field-level encryption for salary information
+- Multi-factor authentication for admin accounts
+
+## Testing Security Components
+
+```dart
+void main() {
+  group('Authentication Repository', () {
+    late AuthenticationRepository repository;
+    late MockSecureStorageService mockSecureStorage;
+    late MockAuthApiService mockAuthApiService;
+    late MockJwtService mockJwtService;
+
+    setUp(() {
+      mockSecureStorage = MockSecureStorageService();
+      mockAuthApiService = MockAuthApiService();
+      mockJwtService = MockJwtService();
+      repository = AuthenticationRepository(
+        mockSecureStorage,
+        mockAuthApiService,
+        mockJwtService,
+      );
+    });
+
+    test('login should store tokens and return user on success', () async {
+      // arrange
+      final tokens = AuthTokens(
+        accessToken: 'test-access-token',
+        refreshToken: 'test-refresh-token',
+        accessTokenExpiry: DateTime.now().add(const Duration(hours: 1)),
+        refreshTokenExpiry: DateTime.now().add(const Duration(days: 7)),
+      );
+      
+      when(mockAuthApiService.login(any, any))
+          .thenAnswer((_) async => Right(tokens));
+      
+      when(mockSecureStorage.storeAuthTokens(any))
+          .thenAnswer((_) async => {});
+      
+      when(mockJwtService.verifyAccessToken(any))
+          .thenAnswer((_) => Right({
+                'sub': 'user-123',
+                'email': 'user@example.com',
+                'roles': ['Employee'],
+              }));
+
+      // act
+      final result = await repository.login('user@example.com', 'password');
+
+      // assert
+      verify(mockAuthApiService.login('user@example.com', 'password')).called(1);
+      verify(mockSecureStorage.storeAuthTokens(tokens)).called(1);
+      verify(mockJwtService.verifyAccessToken('test-access-token')).called(1);
+      
+      expect(result.isRight(), true);
+      result.fold(
+        (failure) => fail('Should not return failure'),
+        (user) {
+          expect(user.id, equals('user-123'));
+          expect(user.email, equals('user@example.com'));
+          expect(user.roles, contains('Employee'));
+        },
+      );
+    });
+    
+    // More tests...
+  });
+  
+  // More groups for other security components...
+}
+```
+
+## Implementation Process
+
+When implementing authentication and security:
+
+1. Start with security tests before implementation
+2. Implement the secure storage layer first
+3. Set up JWT handling with proper token management
+4. Create the authentication repository with login, logout, and refresh flows
+5. Implement role-based access control
+6. Add device management and verification
+7. Implement field-level encryption for sensitive data
+8. Add multi-factor authentication for admin accounts
+
+9. Ensure security at all layers (UI, API, and data)

@@ -1,0 +1,939 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces field-level encryption for sensitive employee data in the HR Connect application
+globs: "**/encryption*.dart,**/security/*.dart,**/repository/*.dart,**/models/*.dart"
+alwaysApply: false
+@sensitiveDataEncryption
+---
+
+# Sensitive Data Encryption
+
+This rule provides guidance for implementing field-level encryption for sensitive employee data in the HR Connect application. It focuses on ensuring that sensitive data such as salary information, personal identification numbers, and health information is properly encrypted at rest and in transit.
+
+## Core Principles
+
+1. Sensitive employee data must be encrypted at rest
+2. Field-level encryption must be used for specific sensitive fields
+3. Encryption keys must be securely stored and managed
+4. Encrypted data must be properly typed and validated
+5. Decryption should only occur when absolutely necessary
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Encryption and Security
+  encrypt: ^5.0.1           # For encryption algorithms
+  pointycastle: ^3.7.3      # Underlying cryptographic implementation
+  flutter_secure_storage: ^9.2.4  # For securely storing encryption keys
+  
+  # Database
+  drift: ^2.26.1           # For local database storage
+  
+  # Utilities
+  equatable: ^2.0.5        # For value objects
+  dartz: ^0.10.1           # For functional error handling
+```
+
+## Sensitive Field Value Objects
+
+```dart
+/// Base class for encrypted value objects
+abstract class EncryptedValueObject<T> extends Equatable {
+  final Either<EncryptionFailure, EncryptedValue<T>> value;
+  
+  const EncryptedValueObject(this.value);
+  
+  /// Gets the decrypted value if available
+  Either<EncryptionFailure, T> getDecryptedValue() {
+    return value.fold(
+      (failure) => Left(failure),
+      (encryptedValue) => encryptedValue.decrypt(),
+    );
+  }
+  
+  @override
+  List<Object> get props => [value];
+}
+
+/// Encrypted salary information
+class EncryptedSalary extends EncryptedValueObject<Decimal> {
+  const EncryptedSalary(Either<EncryptionFailure, EncryptedValue<Decimal>> value)
+      : super(value);
+  
+  /// Creates an encrypted salary from a decimal value
+  factory EncryptedSalary.fromDecimal(Decimal salary) {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    
+    try {
+      final encryptedValue = encryptionService.encryptDecimal(salary);
+      return EncryptedSalary(Right(encryptedValue));
+    } on EncryptionException catch (e) {
+      return EncryptedSalary(Left(EncryptionFailure(e.message)));
+    }
+  }
+  
+  /// Creates an encrypted salary from an already encrypted string
+  factory EncryptedSalary.fromEncrypted(String encryptedString) {
+    return EncryptedSalary(
+      Right(EncryptedValue<Decimal>(
+        encryptedString,
+        DecimalEncryptionConverter(),
+      )),
+    );
+  }
+}
+
+/// Encrypted social security number
+class EncryptedSsn extends EncryptedValueObject<String> {
+  const EncryptedSsn(Either<EncryptionFailure, EncryptedValue<String>> value)
+      : super(value);
+  
+  /// Creates an encrypted SSN from a string value
+  factory EncryptedSsn.fromString(String ssn) {
+    // Validate SSN format before encryption
+    if (!_isValidSsn(ssn)) {
+      return EncryptedSsn(Left(EncryptionFailure('Invalid SSN format')));
+    }
+    
+    final encryptionService = GetIt.instance<EncryptionService>();
+    
+    try {
+      final encryptedValue = encryptionService.encryptString(ssn);
+      return EncryptedSsn(Right(encryptedValue));
+    } on EncryptionException catch (e) {
+      return EncryptedSsn(Left(EncryptionFailure(e.message)));
+    }
+  }
+  
+  /// Creates an encrypted SSN from an already encrypted string
+  factory EncryptedSsn.fromEncrypted(String encryptedString) {
+    return EncryptedSsn(
+      Right(EncryptedValue<String>(
+        encryptedString,
+        StringEncryptionConverter(),
+      )),
+    );
+  }
+  
+  /// Validates SSN format
+  static bool _isValidSsn(String ssn) {
+    // Simple validation for US SSN (###-##-####)
+    final regexp = RegExp(r'^\d{3}-\d{2}-\d{4}$');
+    return regexp.hasMatch(ssn);
+  }
+}
+
+/// Encrypted bank account number
+class EncryptedBankAccount extends EncryptedValueObject<String> {
+  const EncryptedBankAccount(Either<EncryptionFailure, EncryptedValue<String>> value)
+      : super(value);
+  
+  /// Creates an encrypted bank account from a string value
+  factory EncryptedBankAccount.fromString(String accountNumber) {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    
+    try {
+      final encryptedValue = encryptionService.encryptString(accountNumber);
+      return EncryptedBankAccount(Right(encryptedValue));
+    } on EncryptionException catch (e) {
+      return EncryptedBankAccount(Left(EncryptionFailure(e.message)));
+    }
+  }
+  
+  /// Creates an encrypted bank account from an already encrypted string
+  factory EncryptedBankAccount.fromEncrypted(String encryptedString) {
+    return EncryptedBankAccount(
+      Right(EncryptedValue<String>(
+        encryptedString,
+        StringEncryptionConverter(),
+      )),
+    );
+  }
+}
+```
+
+## Encryption Service
+
+```dart
+/// Service for encrypting and decrypting sensitive data
+class EncryptionService {
+  final FlutterSecureStorage _secureStorage;
+  
+  /// Key names for secure storage
+  static const String _encryptionKeyName = 'encryption_key';
+  static const String _encryptionIvName = 'encryption_iv';
+  
+  /// Cache for encryption key and IV
+  Encrypter? _encrypter;
+  IV? _iv;
+  
+  EncryptionService(this._secureStorage);
+  
+  /// Initializes the encryption service
+  Future<void> initialize() async {
+    await _ensureEncryptionKey();
+  }
+  
+  /// Ensures that encryption key and IV exist
+  Future<void> _ensureEncryptionKey() async {
+    // Check if key already exists in secure storage
+    String? key = await _secureStorage.read(key: _encryptionKeyName);
+    String? ivString = await _secureStorage.read(key: _encryptionIvName);
+    
+    if (key == null || ivString == null) {
+      // Generate new key and IV
+      final random = Random.secure();
+      final keyBytes = List<int>.generate(32, (_) => random.nextInt(256));
+      final ivBytes = List<int>.generate(16, (_) => random.nextInt(256));
+      
+      key = base64Url.encode(keyBytes);
+      ivString = base64Url.encode(ivBytes);
+      
+      // Store in secure storage
+      await _secureStorage.write(key: _encryptionKeyName, value: key);
+      await _secureStorage.write(key: _encryptionIvName, value: ivString);
+    }
+    
+    // Create encrypter with the key
+    final keyBytes = base64Url.decode(key);
+    final ivBytes = base64Url.decode(ivString);
+    
+    _encrypter = Encrypter(AES(Key(Uint8List.fromList(keyBytes)), mode: AESMode.cbc));
+    _iv = IV(Uint8List.fromList(ivBytes));
+  }
+  
+  /// Gets the encrypter, initializing if needed
+  Future<Encrypter> _getEncrypter() async {
+    if (_encrypter == null) {
+      await _ensureEncryptionKey();
+    }
+    return _encrypter!;
+  }
+  
+  /// Gets the IV, initializing if needed
+  Future<IV> _getIv() async {
+    if (_iv == null) {
+      await _ensureEncryptionKey();
+    }
+    return _iv!;
+  }
+  
+  /// Encrypts a string value
+  Future<EncryptedValue<String>> encryptString(String value) async {
+    try {
+      final encrypter = await _getEncrypter();
+      final iv = await _getIv();
+      
+      final encrypted = encrypter.encrypt(value, iv: iv);
+      return EncryptedValue<String>(encrypted.base64, StringEncryptionConverter());
+    } catch (e) {
+      throw EncryptionException('Failed to encrypt string: ${e.toString()}');
+    }
+  }
+  
+  /// Decrypts a string value
+  Future<String> decryptString(String encryptedValue) async {
+    try {
+      final encrypter = await _getEncrypter();
+      final iv = await _getIv();
+      
+      final encrypted = Encrypted.fromBase64(encryptedValue);
+      return encrypter.decrypt(encrypted, iv: iv);
+    } catch (e) {
+      throw EncryptionException('Failed to decrypt string: ${e.toString()}');
+    }
+  }
+  
+  /// Encrypts a decimal value
+  Future<EncryptedValue<Decimal>> encryptDecimal(Decimal value) async {
+    try {
+      final encrypter = await _getEncrypter();
+      final iv = await _getIv();
+      
+      final valueStr = value.toString();
+      final encrypted = encrypter.encrypt(valueStr, iv: iv);
+      return EncryptedValue<Decimal>(encrypted.base64, DecimalEncryptionConverter());
+    } catch (e) {
+      throw EncryptionException('Failed to encrypt decimal: ${e.toString()}');
+    }
+  }
+  
+  /// Decrypts a decimal value
+  Future<Decimal> decryptDecimal(String encryptedValue) async {
+    try {
+      final encrypter = await _getEncrypter();
+      final iv = await _getIv();
+      
+      final encrypted = Encrypted.fromBase64(encryptedValue);
+      final decryptedStr = encrypter.decrypt(encrypted, iv: iv);
+      
+      return Decimal.parse(decryptedStr);
+    } catch (e) {
+      throw EncryptionException('Failed to decrypt decimal: ${e.toString()}');
+    }
+  }
+  
+  /// Encrypts a date value
+  Future<EncryptedValue<DateTime>> encryptDate(DateTime value) async {
+    try {
+      final encrypter = await _getEncrypter();
+      final iv = await _getIv();
+      
+      final valueStr = value.toIso8601String();
+      final encrypted = encrypter.encrypt(valueStr, iv: iv);
+      return EncryptedValue<DateTime>(encrypted.base64, DateTimeEncryptionConverter());
+    } catch (e) {
+      throw EncryptionException('Failed to encrypt date: ${e.toString()}');
+    }
+  }
+  
+  /// Decrypts a date value
+  Future<DateTime> decryptDate(String encryptedValue) async {
+    try {
+      final encrypter = await _getEncrypter();
+      final iv = await _getIv();
+      
+      final encrypted = Encrypted.fromBase64(encryptedValue);
+      final decryptedStr = encrypter.decrypt(encrypted, iv: iv);
+      
+      return DateTime.parse(decryptedStr);
+    } catch (e) {
+      throw EncryptionException('Failed to decrypt date: ${e.toString()}');
+    }
+  }
+}
+```
+
+## Encrypted Value Handlers
+
+```dart
+/// Represents an encrypted value
+class EncryptedValue<T> {
+  final String encryptedString;
+  final EncryptionConverter<T> converter;
+  
+  const EncryptedValue(this.encryptedString, this.converter);
+  
+  /// Decrypts the value
+  Either<EncryptionFailure, T> decrypt() {
+    try {
+      return Right(converter.fromEncrypted(encryptedString));
+    } on EncryptionException catch (e) {
+      return Left(EncryptionFailure(e.message));
+    }
+  }
+}
+
+/// Base converter for encrypted values
+abstract class EncryptionConverter<T> {
+  /// Converts encrypted string to typed value
+  Future<T> fromEncrypted(String encrypted);
+  
+  /// Converts typed value to encrypted string
+  Future<String> toEncrypted(T value);
+}
+
+/// Converter for String encryption
+class StringEncryptionConverter implements EncryptionConverter<String> {
+  @override
+  Future<String> fromEncrypted(String encrypted) async {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    return encryptionService.decryptString(encrypted);
+  }
+  
+  @override
+  Future<String> toEncrypted(String value) async {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    final encryptedValue = await encryptionService.encryptString(value);
+    return encryptedValue.encryptedString;
+  }
+}
+
+/// Converter for Decimal encryption
+class DecimalEncryptionConverter implements EncryptionConverter<Decimal> {
+  @override
+  Future<Decimal> fromEncrypted(String encrypted) async {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    return encryptionService.decryptDecimal(encrypted);
+  }
+  
+  @override
+  Future<String> toEncrypted(Decimal value) async {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    final encryptedValue = await encryptionService.encryptDecimal(value);
+    return encryptedValue.encryptedString;
+  }
+}
+
+/// Converter for DateTime encryption
+class DateTimeEncryptionConverter implements EncryptionConverter<DateTime> {
+  @override
+  Future<DateTime> fromEncrypted(String encrypted) async {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    return encryptionService.decryptDate(encrypted);
+  }
+  
+  @override
+  Future<String> toEncrypted(DateTime value) async {
+    final encryptionService = GetIt.instance<EncryptionService>();
+    final encryptedValue = await encryptionService.encryptDate(value);
+    return encryptedValue.encryptedString;
+  }
+}
+
+/// Failure for encryption operations
+class EncryptionFailure {
+  final String message;
+  
+  const EncryptionFailure(this.message);
+}
+
+/// Exception for encryption operations
+class EncryptionException implements Exception {
+  final String message;
+  
+  const EncryptionException(this.message);
+  
+  @override
+  String toString() => 'EncryptionException: $message';
+}
+```
+
+## Database Integration
+
+```dart
+/// TypeConverter for storing EncryptedSalary in Drift database
+class EncryptedSalaryConverter extends TypeConverter<EncryptedSalary, String> {
+  const EncryptedSalaryConverter();
+  
+  @override
+  EncryptedSalary fromSql(String fromDb) {
+    return EncryptedSalary.fromEncrypted(fromDb);
+  }
+  
+  @override
+  String toSql(EncryptedSalary value) {
+    return value.value.fold(
+      (failure) => throw Exception('Cannot store invalid encrypted value: ${failure.message}'),
+      (encryptedValue) => encryptedValue.encryptedString,
+    );
+  }
+}
+
+/// TypeConverter for storing EncryptedSsn in Drift database
+class EncryptedSsnConverter extends TypeConverter<EncryptedSsn, String> {
+  const EncryptedSsnConverter();
+  
+  @override
+  EncryptedSsn fromSql(String fromDb) {
+    return EncryptedSsn.fromEncrypted(fromDb);
+  }
+  
+  @override
+  String toSql(EncryptedSsn value) {
+    return value.value.fold(
+      (failure) => throw Exception('Cannot store invalid encrypted value: ${failure.message}'),
+      (encryptedValue) => encryptedValue.encryptedString,
+    );
+  }
+}
+
+/// TypeConverter for storing EncryptedBankAccount in Drift database
+class EncryptedBankAccountConverter extends TypeConverter<EncryptedBankAccount, String> {
+  const EncryptedBankAccountConverter();
+  
+  @override
+  EncryptedBankAccount fromSql(String fromDb) {
+    return EncryptedBankAccount.fromEncrypted(fromDb);
+  }
+  
+  @override
+  String toSql(EncryptedBankAccount value) {
+    return value.value.fold(
+      (failure) => throw Exception('Cannot store invalid encrypted value: ${failure.message}'),
+      (encryptedValue) => encryptedValue.encryptedString,
+    );
+  }
+}
+
+/// Example of table definition with encrypted fields
+class EmploymentProfiles extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get employeeId => text().references(Employees, #id)();
+  TextColumn get employmentType => text()();
+  TextColumn get position => text()();
+  TextColumn get department => text()();
+  TextColumn get encryptedSalary => text().map(const EncryptedSalaryConverter())();
+  TextColumn get encryptedSsn => text().map(const EncryptedSsnConverter())();
+  TextColumn get encryptedBankAccount => text().map(const EncryptedBankAccountConverter())();
+  DateTimeColumn get startDate => dateTime()();
+  DateTimeColumn get endDate => dateTime().nullable()();
+}
+```
+
+## Repository Implementation
+
+```dart
+/// Repository for employment profiles with encrypted fields
+class EmploymentProfileRepository {
+  final Database _database;
+  final EncryptionService _encryptionService;
+  
+  EmploymentProfileRepository(this._database, this._encryptionService);
+  
+  /// Creates a new employment profile
+  Future<Either<RepositoryFailure, EmploymentProfile>> createProfile(
+    EmploymentProfile profile,
+  ) async {
+    try {
+      // Insert into database
+      final id = await _database.into(_database.employmentProfiles).insert(
+        EmploymentProfilesCompanion.insert(
+          employeeId: profile.employeeId,
+          employmentType: profile.employmentType,
+          position: profile.position,
+          department: profile.department,
+          encryptedSalary: profile.salary,
+          encryptedSsn: profile.ssn,
+          encryptedBankAccount: profile.bankAccount,
+          startDate: profile.startDate,
+          endDate: Value(profile.endDate),
+        ),
+      );
+      
+      // Return updated profile with ID
+      return Right(profile.copyWith(id: id));
+    } catch (e) {
+      return Left(RepositoryFailure('Failed to create employment profile: ${e.toString()}'));
+    }
+  }
+  
+  /// Gets an employment profile by ID
+  Future<Either<RepositoryFailure, EmploymentProfile>> getProfileById(int id) async {
+    try {
+      final result = await (_database.select(_database.employmentProfiles)
+          ..where((p) => p.id.equals(id)))
+          .getSingleOrNull();
+      
+      if (result == null) {
+        return Left(RepositoryFailure('Employment profile not found'));
+      }
+      
+      return Right(EmploymentProfile(
+        id: result.id,
+        employeeId: result.employeeId,
+        employmentType: result.employmentType,
+        position: result.position,
+        department: result.department,
+        salary: result.encryptedSalary,
+        ssn: result.encryptedSsn,
+        bankAccount: result.encryptedBankAccount,
+        startDate: result.startDate,
+        endDate: result.endDate,
+      ));
+    } catch (e) {
+      return Left(RepositoryFailure('Failed to get employment profile: ${e.toString()}'));
+    }
+  }
+  
+  /// Updates an employment profile
+  Future<Either<RepositoryFailure, Unit>> updateProfile(
+    EmploymentProfile profile,
+  ) async {
+    try {
+      final rowsAffected = await (_database.update(_database.employmentProfiles)
+          ..where((p) => p.id.equals(profile.id)))
+          .write(
+            EmploymentProfilesCompanion(
+              employmentType: Value(profile.employmentType),
+              position: Value(profile.position),
+              department: Value(profile.department),
+              encryptedSalary: Value(profile.salary),
+              encryptedSsn: Value(profile.ssn),
+              encryptedBankAccount: Value(profile.bankAccount),
+              startDate: Value(profile.startDate),
+              endDate: Value(profile.endDate),
+            ),
+          );
+      
+      if (rowsAffected == 0) {
+        return Left(RepositoryFailure('Employment profile not found'));
+      }
+      
+      return const Right(unit);
+    } catch (e) {
+      return Left(RepositoryFailure('Failed to update employment profile: ${e.toString()}'));
+    }
+  }
+  
+  /// Gets profiles by department with partial decryption
+  Future<Either<RepositoryFailure, List<EmploymentProfileSummary>>> 
+      getProfilesByDepartment(String department) async {
+    try {
+      final results = await (_database.select(_database.employmentProfiles)
+          ..where((p) => p.department.equals(department)))
+          .get();
+      
+      // Map to summaries without decrypting sensitive data
+      final summaries = results.map((result) => EmploymentProfileSummary(
+        id: result.id,
+        employeeId: result.employeeId,
+        employmentType: result.employmentType,
+        position: result.position,
+        department: result.department,
+        startDate: result.startDate,
+        endDate: result.endDate,
+        // Do not include salary, SSN, or bank account in summary
+      )).toList();
+      
+      return Right(summaries);
+    } catch (e) {
+      return Left(RepositoryFailure('Failed to get employment profiles: ${e.toString()}'));
+    }
+  }
+}
+```
+
+## UI Integration
+
+```dart
+/// Field for entering encrypted data
+class EncryptedTextField extends StatefulWidget {
+  final String label;
+  final String? value;
+  final bool isObscured;
+  final TextInputType keyboardType;
+  final Function(String) onChanged;
+  
+  const EncryptedTextField({
+    Key? key,
+    required this.label,
+    this.value,
+    this.isObscured = true,
+    this.keyboardType = TextInputType.text,
+    required this.onChanged,
+  }) : super(key: key);
+  
+  @override
+  _EncryptedTextFieldState createState() => _EncryptedTextFieldState();
+}
+
+class _EncryptedTextFieldState extends State<EncryptedTextField> {
+  late TextEditingController _controller;
+  bool _isVisible = false;
+  
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.value);
+  }
+  
+  @override
+  void didUpdateWidget(covariant EncryptedTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.value != oldWidget.value) {
+      _controller.text = widget.value ?? '';
+    }
+  }
+  
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _controller,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        suffixIcon: widget.isObscured
+            ? IconButton(
+                icon: Icon(_isVisible ? Icons.visibility_off : Icons.visibility),
+                onPressed: () {
+                  setState(() {
+                    _isVisible = !_isVisible;
+                  });
+                },
+              )
+            : null,
+      ),
+      obscureText: widget.isObscured && !_isVisible,
+      keyboardType: widget.keyboardType,
+      onChanged: widget.onChanged,
+    );
+  }
+}
+
+/// Display for Salary Value
+class SalaryDisplay extends ConsumerWidget {
+  final EncryptedSalary salary;
+  final bool showAsMasked;
+  
+  const SalaryDisplay({
+    Key? key,
+    required this.salary,
+    this.showAsMasked = true,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    if (showAsMasked) {
+      return Text('*****');
+    }
+    
+    final decryptedValueAsync = ref.watch(decryptSalaryProvider(salary));
+    
+    return decryptedValueAsync.when(
+      data: (decryptedValue) {
+        return decryptedValue.fold(
+          (failure) => Text('Error: ${failure.message}'),
+          (value) => Text(
+            NumberFormat.currency(symbol: '\$').format(value.toDouble()),
+            style: TextStyle(fontWeight: FontWeight.bold),
+          ),
+        );
+      },
+      loading: () => CircularProgressIndicator(strokeWidth: 2),
+      error: (_, __) => Text('Error decrypting value'),
+    );
+  }
+}
+
+/// Provider for salary decryption
+final decryptSalaryProvider = FutureProvider.family<Either<EncryptionFailure, Decimal>, EncryptedSalary>(
+  (ref, salary) async {
+    return salary.getDecryptedValue();
+  },
+);
+```
+
+## Business Rules for Sensitive Data Encryption
+
+1. **Sensitive Field Identification**
+   - The following fields must be encrypted:
+     - Salary information and compensation details
+     - Social security numbers (SSN) or national ID numbers
+     - Bank account information
+     - Medical/health information
+     - Home address details (for certain roles)
+   - Personal contact information (phone, email) should not be stored encrypted to allow for communication
+
+2. **Encryption Requirements**
+   - AES-256 encryption must be used for all sensitive data
+   - Encryption keys must be stored in Flutter Secure Storage, not in shared preferences
+   - Initialization vectors (IVs) must be unique and securely stored
+   - Encrypted data must be stored as Base64 encoded strings in the database
+
+3. **Access Control**
+   - Decryption should only occur when data is viewed by authorized users
+   - Different roles have different access levels:
+     - Employees can view their own encrypted data
+     - Branch Managers can view limited encrypted data for their team
+     - Payroll Portal can view financial data
+     - HR Portal can view all encrypted data
+   - All decryption operations must be logged for audit purposes
+
+4. **Key Management**
+   - Encryption keys must be generated on first app launch
+   - Keys must never be stored in plain text
+   - Key rotation policy should be implemented (e.g., annually)
+   - Separate keys should be used for different categories of sensitive data
+
+5. **UI Handling**
+   - Sensitive fields should be displayed as masked by default
+   - Explicit user action should be required to view sensitive data
+   - Copy-paste functionality should be disabled for sensitive fields
+   - Session timeouts should clear decrypted data from memory
+
+## Testing Approach
+
+```dart
+void main() {
+  group('EncryptionService', () {
+    late MockFlutterSecureStorage mockSecureStorage;
+    late EncryptionService encryptionService;
+    
+    setUp(() {
+      mockSecureStorage = MockFlutterSecureStorage();
+      encryptionService = EncryptionService(mockSecureStorage);
+      
+      // Mock key storage
+      when(mockSecureStorage.read(key: 'encryption_key'))
+          .thenAnswer((_) async => 'VGhpcyBpcyBhIHRlc3Qga2V5IGZvciBlbmNyeXB0aW9uLg=='); // Test key
+      when(mockSecureStorage.read(key: 'encryption_iv'))
+          .thenAnswer((_) async => 'VGhpcyBpcyBhIHRlc3QgaXYgZm9yIGVuY3J5cHRpb24u'); // Test IV
+    });
+    
+    test('should initialize encryption service', () async {
+      // Act
+      await encryptionService.initialize();
+      
+      // Assert
+      verify(mockSecureStorage.read(key: 'encryption_key')).called(1);
+      verify(mockSecureStorage.read(key: 'encryption_iv')).called(1);
+    });
+    
+    test('should encrypt and decrypt string values', () async {
+      // Arrange
+      await encryptionService.initialize();
+      const originalValue = 'test-value-123';
+      
+      // Act
+      final encryptedValue = await encryptionService.encryptString(originalValue);
+      final decryptedValue = await encryptionService.decryptString(encryptedValue.encryptedString);
+      
+      // Assert
+      expect(encryptedValue.encryptedString, isNot(equals(originalValue)));
+      expect(decryptedValue, equals(originalValue));
+    });
+    
+    test('should encrypt and decrypt decimal values', () async {
+      // Arrange
+      await encryptionService.initialize();
+      final originalValue = Decimal.parse('12345.67');
+      
+      // Act
+      final encryptedValue = await encryptionService.encryptDecimal(originalValue);
+      final decryptedValue = await encryptionService.decryptDecimal(encryptedValue.encryptedString);
+      
+      // Assert
+      expect(encryptedValue.encryptedString, isNot(equals(originalValue.toString())));
+      expect(decryptedValue, equals(originalValue));
+    });
+    
+    test('should generate new keys if none exist', () async {
+      // Arrange
+      when(mockSecureStorage.read(key: 'encryption_key'))
+          .thenAnswer((_) async => null);
+      when(mockSecureStorage.read(key: 'encryption_iv'))
+          .thenAnswer((_) async => null);
+      
+      when(mockSecureStorage.write(key: any, value: any))
+          .thenAnswer((_) async => {});
+      
+      // Act
+      await encryptionService.initialize();
+      
+      // Assert
+      verify(mockSecureStorage.write(key: 'encryption_key', value: any)).called(1);
+      verify(mockSecureStorage.write(key: 'encryption_iv', value: any)).called(1);
+    });
+  });
+  
+  group('EncryptedValueObjects', () {
+    late MockEncryptionService mockEncryptionService;
+    
+    setUp(() {
+      mockEncryptionService = MockEncryptionService();
+      
+      // Set up GetIt
+      GetIt.instance.registerSingleton<EncryptionService>(mockEncryptionService);
+    });
+    
+    tearDown(() {
+      GetIt.instance.reset();
+    });
+    
+    test('EncryptedSalary should encrypt decimal value', () async {
+      // Arrange
+      final decimal = Decimal.parse('5000.00');
+      final encryptedValue = EncryptedValue<Decimal>(
+        'encrypted-salary',
+        DecimalEncryptionConverter(),
+      );
+      
+      when(mockEncryptionService.encryptDecimal(decimal))
+          .thenAnswer((_) async => encryptedValue);
+      
+      // Act
+      final salary = EncryptedSalary.fromDecimal(decimal);
+      
+      // Assert
+      expect(salary.value.isRight(), isTrue);
+      salary.value.fold(
+        (failure) => fail('Expected Right, got Left with $failure'),
+        (value) => expect(value.encryptedString, equals('encrypted-salary')),
+      );
+    });
+    
+    test('EncryptedSsn should validate SSN format', () {
+      // Arrange
+      const invalidSsn = '12345'; // Invalid format
+      
+      // Act
+      final ssn = EncryptedSsn.fromString(invalidSsn);
+      
+      // Assert
+      expect(ssn.value.isLeft(), isTrue);
+      ssn.value.fold(
+        (failure) => expect(failure.message, contains('Invalid SSN format')),
+        (_) => fail('Expected Left, got Right'),
+      );
+    });
+    
+    test('EncryptedValueObject getDecryptedValue should work', () async {
+      // Arrange
+      const encryptedString = 'encrypted-bank-account';
+      const decryptedValue = '1234567890';
+      
+      final mockConverter = MockStringEncryptionConverter();
+      when(mockConverter.fromEncrypted(encryptedString))
+          .thenAnswer((_) async => decryptedValue);
+      
+      final bankAccount = EncryptedBankAccount(
+        Right(EncryptedValue<String>(encryptedString, mockConverter)),
+      );
+      
+      // Act
+      final result = await bankAccount.getDecryptedValue();
+      
+      // Assert
+      expect(result.isRight(), isTrue);
+      result.fold(
+        (failure) => fail('Expected Right, got Left with $failure'),
+        (value) => expect(value, equals(decryptedValue)),
+      );
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Secure Key Management**
+   - Generate secure random keys using cryptographically secure RNG
+   - Store keys in Flutter Secure Storage, not in shared preferences
+   - Consider platform-specific key storage (Keychain for iOS, Keystore for Android)
+   - Implement key rotation mechanism for long-term security
+
+2. **Optimization for Performance**
+   - Cache encryption keys in memory after first use
+   - Encrypt data only when needed, not on every save
+   - Decrypt data only when needed, not on every load
+   - Batch encryption/decryption operations where possible
+
+3. **Defensive Implementation**
+   - Validate data before encryption
+   - Use try-catch blocks for all cryptographic operations
+   - Return Either<Failure, T> for all operations to handle errors
+   - Clear sensitive data from memory after use
+
+4. **UI Considerations**
+   - Implement masked fields for sensitive data
+   - Require explicit user action to reveal sensitive information
+   - Add visual indicators for encrypted fields
+   - Implement timeouts to auto-hide sensitive data
+
+5. **Testing and Verification**
+   - Test encryption and decryption with various data types
+   - Verify that encrypted data is properly persisted
+   - Test error handling for encryption/decryption failures
+
+   - Implement integration tests for the complete flow

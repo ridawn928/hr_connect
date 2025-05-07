@@ -1,0 +1,481 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces proper validation for aggregate roots and their related profiles
+globs: "**/employee*.dart,**/aggregate*.dart,**/domain/entities/*.dart,**/domain/models/*.dart"
+alwaysApply: false
+name: @aggregateRootValidation
+---
+
+# Aggregate Root Validation
+
+This rule provides guidance for implementing and validating aggregate roots in the HR Connect application. It focuses on the Employee entity as the primary aggregate root and its relationship with supporting profile aggregates.
+
+## Core Principles
+
+1. The Employee entity serves as the primary aggregate root with supporting profile aggregates
+2. Each profile aggregate enforces its own business rules and invariants
+3. All aggregates maintain reference to their parent Employee
+4. Validation must happen at the domain level before persistence
+
+## Required Packages
+
+```yaml
+dependencies:
+  dartz: ^0.10.1        # For Either type in validation results
+  equatable: ^2.0.5     # For value object equality comparison
+  uuid: ^3.0.7          # For unique ID generation
+  freezed: ^2.3.5       # For immutable model generation
+```
+
+## Aggregate Root Implementation
+
+### Employee Aggregate Root
+
+```dart
+/// Primary aggregate root for the HR Connect system
+/// Contains core identity and basic information
+class Employee extends Equatable {
+  final EmployeeId id;
+  final FullName name;
+  final EmailAddress email;
+  final PhoneNumber phoneNumber;
+  final EmployeeCode employeeCode;
+
+  // References to profile aggregates (optional - may be lazy loaded)
+  final AuthenticationProfile? authProfile;
+  final DeviceProfile? deviceProfile;
+  final AttendanceProfile? attendanceProfile;
+  final RequestProfile? requestProfile;
+  final EmploymentProfile? employmentProfile;
+  final PerformanceProfile? performanceProfile;
+  final NotificationProfile? notificationProfile;
+  final SyncProfile? syncProfile;
+
+  const Employee({
+    required this.id,
+    required this.name,
+    required this.email,
+    required this.phoneNumber,
+    required this.employeeCode,
+    this.authProfile,
+    this.deviceProfile,
+    this.attendanceProfile,
+    this.requestProfile,
+    this.employmentProfile,
+    this.performanceProfile,
+    this.notificationProfile,
+    this.syncProfile,
+  });
+
+  /// Validates all core fields and returns a Right with the Employee if valid,
+  /// or a Left with a ValidationFailure if invalid
+  static Either<ValidationFailure, Employee> create({
+    required String idStr,
+    required String firstName,
+    required String lastName,
+    required String email,
+    required String phoneNumber,
+    required String employeeCode,
+  }) {
+    // Validate all value objects
+    final idOrFailure = EmployeeId.create(idStr);
+    final nameOrFailure = FullName.create(firstName, lastName);
+    final emailOrFailure = EmailAddress.create(email);
+    final phoneNumberOrFailure = PhoneNumber.create(phoneNumber);
+    final employeeCodeOrFailure = EmployeeCode.create(employeeCode);
+
+    // Check if any validation failed
+    if (idOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid employee ID'));
+    }
+    if (nameOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid name format'));
+    }
+    if (emailOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid email address'));
+    }
+    if (phoneNumberOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid phone number format'));
+    }
+    if (employeeCodeOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid employee code format'));
+    }
+
+    // All validations passed, create and return the Employee
+    return Right(Employee(
+      id: idOrFailure.getOrElse(() => EmployeeId('')),
+      name: nameOrFailure.getOrElse(() => FullName('', '')),
+      email: emailOrFailure.getOrElse(() => EmailAddress('')),
+      phoneNumber: phoneNumberOrFailure.getOrElse(() => PhoneNumber('')),
+      employeeCode: employeeCodeOrFailure.getOrElse(() => EmployeeCode('')),
+    ));
+  }
+
+  /// Returns a copy of this Employee with updated fields
+  Employee copyWith({
+    EmployeeId? id,
+    FullName? name,
+    EmailAddress? email,
+    PhoneNumber? phoneNumber,
+    EmployeeCode? employeeCode,
+    AuthenticationProfile? authProfile,
+    DeviceProfile? deviceProfile,
+    AttendanceProfile? attendanceProfile,
+    RequestProfile? requestProfile,
+    EmploymentProfile? employmentProfile,
+    PerformanceProfile? performanceProfile,
+    NotificationProfile? notificationProfile,
+    SyncProfile? syncProfile,
+  }) {
+    return Employee(
+      id: id ?? this.id,
+      name: name ?? this.name,
+      email: email ?? this.email,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      employeeCode: employeeCode ?? this.employeeCode,
+      authProfile: authProfile ?? this.authProfile,
+      deviceProfile: deviceProfile ?? this.deviceProfile,
+      attendanceProfile: attendanceProfile ?? this.attendanceProfile,
+      requestProfile: requestProfile ?? this.requestProfile,
+      employmentProfile: employmentProfile ?? this.employmentProfile,
+      performanceProfile: performanceProfile ?? this.performanceProfile,
+      notificationProfile: notificationProfile ?? this.notificationProfile,
+      syncProfile: syncProfile ?? this.syncProfile,
+    );
+  }
+
+  @override
+  List<Object?> get props => [
+    id, name, email, phoneNumber, employeeCode,
+    authProfile, deviceProfile, attendanceProfile,
+    requestProfile, employmentProfile, performanceProfile,
+    notificationProfile, syncProfile,
+  ];
+}
+```
+
+### Profile Aggregate Template
+
+```dart
+/// Base template for all profile aggregates
+/// Each profile should follow this pattern and implement its own validation
+abstract class ProfileAggregate extends Equatable {
+  final ProfileId id;
+  final EmployeeId employeeId;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  const ProfileAggregate({
+    required this.id,
+    required this.employeeId,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+
+  @override
+  List<Object> get props => [id, employeeId, createdAt, updatedAt];
+}
+
+/// Example implementation of a specific profile aggregate
+class AuthenticationProfile extends ProfileAggregate {
+  final Username username;
+  final PasswordHash passwordHash;
+  final List<Role> roles;
+  final bool isActive;
+  final DateTime? lastLogin;
+  final int failedLoginAttempts;
+  
+  const AuthenticationProfile({
+    required super.id,
+    required super.employeeId,
+    required super.createdAt,
+    required super.updatedAt,
+    required this.username,
+    required this.passwordHash,
+    required this.roles,
+    required this.isActive,
+    this.lastLogin,
+    this.failedLoginAttempts = 0,
+  });
+
+  /// Validation factory method
+  static Either<ValidationFailure, AuthenticationProfile> create({
+    required String idStr,
+    required String employeeIdStr,
+    required String username,
+    required String passwordHash,
+    required List<String> roleStrs,
+    bool isActive = true,
+    DateTime? lastLogin,
+    int failedLoginAttempts = 0,
+  }) {
+    // Validate profile ID
+    final idOrFailure = ProfileId.create(idStr);
+    if (idOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid profile ID'));
+    }
+
+    // Validate employee ID
+    final employeeIdOrFailure = EmployeeId.create(employeeIdStr);
+    if (employeeIdOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid employee ID'));
+    }
+
+    // Validate username
+    final usernameOrFailure = Username.create(username);
+    if (usernameOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid username format'));
+    }
+
+    // Validate password hash
+    final passwordHashOrFailure = PasswordHash.create(passwordHash);
+    if (passwordHashOrFailure.isLeft()) {
+      return Left(ValidationFailure('Invalid password hash'));
+    }
+
+    // Validate roles
+    final roles = <Role>[];
+    for (final roleStr in roleStrs) {
+      final roleOrFailure = Role.fromString(roleStr);
+      if (roleOrFailure.isLeft()) {
+        return Left(ValidationFailure('Invalid role: $roleStr'));
+      }
+      roles.add(roleOrFailure.getOrElse(() => Role.employee));
+    }
+
+    // All validations passed, create the profile
+    return Right(AuthenticationProfile(
+      id: idOrFailure.getOrElse(() => ProfileId('')),
+      employeeId: employeeIdOrFailure.getOrElse(() => EmployeeId('')),
+      createdAt: DateTime.now(),
+      updatedAt: DateTime.now(),
+      username: usernameOrFailure.getOrElse(() => Username('')),
+      passwordHash: passwordHashOrFailure.getOrElse(() => PasswordHash('')),
+      roles: roles,
+      isActive: isActive,
+      lastLogin: lastLogin,
+      failedLoginAttempts: failedLoginAttempts,
+    ));
+  }
+
+  @override
+  List<Object?> get props => [
+    ...super.props,
+    username,
+    passwordHash,
+    roles,
+    isActive,
+    lastLogin,
+    failedLoginAttempts,
+  ];
+}
+```
+
+## Value Objects
+
+Value objects should be immutable and enforce domain rules. Here's an example pattern:
+
+```dart
+/// Email address value object with validation
+class EmailAddress extends ValueObject<String> {
+  @override
+  final Either<ValueFailure<String>, String> value;
+
+  factory EmailAddress(String input) {
+    return EmailAddress._(validateEmailAddress(input));
+  }
+
+  const EmailAddress._(this.value);
+
+  /// Factory method with validation
+  static Either<ValueFailure<String>, EmailAddress> create(String input) {
+    final validated = validateEmailAddress(input);
+    return validated.fold(
+      (failure) => Left(failure),
+      (validEmail) => Right(EmailAddress._(Right(validEmail))),
+    );
+  }
+}
+
+/// Phone number value object with validation
+class PhoneNumber extends ValueObject<String> {
+  @override
+  final Either<ValueFailure<String>, String> value;
+
+  factory PhoneNumber(String input) {
+    return PhoneNumber._(validatePhoneNumber(input));
+  }
+
+  const PhoneNumber._(this.value);
+
+  /// Factory method with validation
+  static Either<ValueFailure<String>, PhoneNumber> create(String input) {
+    final validated = validatePhoneNumber(input);
+    return validated.fold(
+      (failure) => Left(failure),
+      (validPhone) => Right(PhoneNumber._(Right(validPhone))),
+    );
+  }
+}
+```
+
+## Validation Functions
+
+```dart
+/// Validates an email address format
+Either<ValueFailure<String>, String> validateEmailAddress(String input) {
+  const emailRegex = r'^[a-zA-Z0-9.]+@[a-zA-Z0-9]+\.[a-zA-Z]+';
+  if (RegExp(emailRegex).hasMatch(input)) {
+    return Right(input);
+  } else {
+    return Left(ValueFailure.invalidEmail(failedValue: input));
+  }
+}
+
+/// Validates a phone number format
+Either<ValueFailure<String>, String> validatePhoneNumber(String input) {
+  // Remove any non-digit characters
+  final digitsOnly = input.replaceAll(RegExp(r'\D'), '');
+  
+  // Check if the result has a valid length for a phone number
+  if (digitsOnly.length >= 10 && digitsOnly.length <= 15) {
+    return Right(digitsOnly);
+  } else {
+    return Left(ValueFailure.invalidPhoneNumber(failedValue: input));
+  }
+}
+```
+
+## Business Rules for Aggregate Root Validation
+
+1. **Identity and Uniqueness**
+   - Every aggregate root must have a unique identifier
+   - Profile aggregates must reference their parent Employee
+   - Unique business identifiers (like employee code) must be validated
+
+2. **Structural Validation**
+   - Core employee data must always be present
+   - Profile aggregates can be optional or lazy-loaded
+   - Related aggregates must maintain referential integrity
+
+3. **Business Rule Enforcement**
+   - Each aggregate enforces its own domain-specific rules
+   - Validation occurs at creation time and before persistence
+   - All updates to aggregates must revalidate all business rules
+
+4. **Value Object Validation**
+   - Use value objects for all attributes that have validation rules
+   - Value objects are immutable and self-validating
+   - Domain-specific validation logic belongs in value objects
+
+5. **Failure Handling**
+   - Use Either<Failure, T> from dartz for validation results
+   - Provide specific failure messages for validation issues
+   - Always validate at the domain level before persistence
+
+## Testing Approach
+
+For aggregate root validation, follow this testing pattern:
+
+```dart
+void main() {
+  group('Employee Aggregate Root', () {
+    test('should create a valid Employee when all fields are valid', () {
+      // Arrange
+      final idStr = '12345';
+      final firstName = 'John';
+      final lastName = 'Doe';
+      final email = 'john.doe@example.com';
+      final phoneNumber = '9876543210';
+      final employeeCode = 'EMP001';
+      
+      // Act
+      final result = Employee.create(
+        idStr: idStr,
+        firstName: firstName,
+        lastName: lastName,
+        email: email,
+        phoneNumber: phoneNumber,
+        employeeCode: employeeCode,
+      );
+      
+      // Assert
+      expect(result.isRight(), true);
+      result.fold(
+        (failure) => fail('Expected Right, got Left with $failure'),
+        (employee) {
+          expect(employee.name.value.getOrElse(() => ''), equals('John Doe'));
+          expect(employee.email.value.getOrElse(() => ''), equals(email));
+          expect(employee.phoneNumber.value.getOrElse(() => ''), equals(phoneNumber));
+          expect(employee.employeeCode.value.getOrElse(() => ''), equals(employeeCode));
+        },
+      );
+    });
+    
+    test('should return ValidationFailure when email is invalid', () {
+      // Arrange
+      final idStr = '12345';
+      final firstName = 'John';
+      final lastName = 'Doe';
+      final invalidEmail = 'invalid.email';
+      final phoneNumber = '9876543210';
+      final employeeCode = 'EMP001';
+      
+      // Act
+      final result = Employee.create(
+        idStr: idStr,
+        firstName: firstName,
+        lastName: lastName,
+        email: invalidEmail,
+        phoneNumber: phoneNumber,
+        employeeCode: employeeCode,
+      );
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure.message, contains('Invalid email')),
+        (employee) => fail('Expected Left, got Right with $employee'),
+      );
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Separate Creation and Validation**
+   - Use factory methods for creating aggregates with validation
+   - Implement the `create` static method pattern shown above
+   - Return Either<ValidationFailure, T> from factory methods
+
+2. **Private Constructors**
+   - Make direct constructors private or const to enforce using factory methods
+   - Example: `const Employee._({required this.id, ...});`
+   - Public factory: `factory Employee({required String id, ...}) { ... }`
+
+3. **Immutable Aggregates**
+   - Use the freezed package for complex aggregates
+   - Implement copyWith methods for all aggregates
+   - Never modify properties directly; create new instances
+
+4. **Repository Integration**
+   - Repositories should accept only valid aggregates
+   - Validate before persistence operations
+   - Example:
+     ```dart
+     Future<Either<RepositoryFailure, Unit>> save(Employee employee) {
+       // Implementation assumes employee is already validated
+       // through its factory method
+     }
+     ```
+
+5. **Use Value Objects**
+   - Create specific value objects for all validated fields
+   - Reuse validation logic across different aggregates
+
+   - Keep validation rules close to the domain concepts they validate

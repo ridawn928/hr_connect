@@ -1,0 +1,35 @@
+targets:
+  $default:
+    builders:
+      injectable_generator:injectable_builder:
+        options:
+          # Enable auto register by default
+          auto_register: true
+          # Class name patterns to auto-register
+          class_name_pattern:
+            "Service$|Repository$|Datasource$|UseCase$|Controller$|Bloc$|Cubit$"
+          # File name patterns to auto-register
+          file_name_pattern:
+            "_service|_repository|_datasource|_use_case|_controller|_bloc|_cubit"
+          # Generate for only specific directories
+          generate_for_dirs:
+            - "lib/core"
+            - "lib/features"
+          # More specific include paths with glob patterns
+          include_paths:
+            - "lib/core/**.dart"
+            - "lib/features/**.dart"
+          # Paths to ignore even if they match include patterns
+          ignore_paths:
+            - "**.g.dart"
+            - "**.freezed.dart"
+            - "**.config.dart"
+            - "**/test/**"
+      
+      # Disable drift_dev completely
+      drift_dev:drift_native:
+        enabled: false
+      drift_dev:drift_web:
+        enabled: false
+      drift_dev:
+        enabled: false

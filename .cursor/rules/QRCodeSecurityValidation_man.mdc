@@ -1,0 +1,772 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces security requirements for QR code generation and validation in the HR Connect attendance system
+globs: "**/qr_*.dart,**/attendance_*.dart,**/scan*.dart,**/validation*.dart"
+alwaysApply: false
+@qrSecurityValidation
+---
+
+# QR Code Security Validation
+
+This rule provides guidance for implementing secure QR code generation and validation in the HR Connect attendance system. It focuses on ensuring QR codes meet the security requirements, including 15-minute validity window, proper digital signature implementation, nonce tracking for replay prevention, and timestamp integrity.
+
+## Core Principles
+
+1. QR codes must expire after 15 minutes (configurable) for security
+2. Each QR code must contain a digital signature to verify authenticity
+3. Nonce tracking must be implemented to prevent replay attacks
+4. Timestamps must be validated to ensure freshness
+5. Geolocation validation should be applied where available
+
+## Required Packages
+
+```yaml
+dependencies:
+  # QR code scanning and generation
+  mobile_scanner: ^6.0.10
+  qr_flutter: ^4.1.0
+  
+  # Cryptography for digital signatures
+  pointycastle: ^3.7.3
+  crypto: ^3.0.3
+  
+  # Utilities
+  uuid: ^3.0.7
+  intl: ^0.20.2
+  
+  # Storage
+  drift: ^2.26.1
+  flutter_secure_storage: ^9.2.4
+  
+  # Location (optional)
+  geolocator: ^10.1.0
+```
+
+## QR Code Structure Implementation
+
+### QR Code Payload Class
+
+```dart
+/// Secure payload for the QR code with necessary security elements
+class QrCodePayload {
+  final String sessionId;     // Unique session identifier
+  final DateTime timestamp;   // Generation timestamp
+  final String nonce;         // Single-use random string
+  final String locationCode;  // Optional location identifier
+  final String signature;     // Digital signature of the payload
+  
+  const QrCodePayload({
+    required this.sessionId,
+    required this.timestamp,
+    required this.nonce,
+    required this.locationCode,
+    required this.signature,
+  });
+  
+  /// Creates the payload from a JSON string
+  factory QrCodePayload.fromJson(Map<String, dynamic> json) {
+    return QrCodePayload(
+      sessionId: json['sessionId'],
+      timestamp: DateTime.parse(json['timestamp']),
+      nonce: json['nonce'],
+      locationCode: json['locationCode'],
+      signature: json['signature'],
+    );
+  }
+  
+  /// Converts the payload to a JSON string
+  Map<String, dynamic> toJson() {
+    return {
+      'sessionId': sessionId,
+      'timestamp': timestamp.toIso8601String(),
+      'nonce': nonce,
+      'locationCode': locationCode,
+      'signature': signature,
+    };
+  }
+  
+  /// Gets the content to be signed (all fields except signature)
+  String getContentForSignature() {
+    return '$sessionId|${timestamp.toIso8601String()}|$nonce|$locationCode';
+  }
+  
+  /// Converts the payload to a QR code string
+  String toQrString() {
+    return jsonEncode(toJson());
+  }
+  
+  /// Creates a payload from a QR code string
+  static QrCodePayload? fromQrString(String qrString) {
+    try {
+      final json = jsonDecode(qrString);
+      return QrCodePayload.fromJson(json);
+    } catch (e) {
+      return null;
+    }
+  }
+}
+```
+
+### QR Code Generator
+
+```dart
+/// Generates secure QR codes for attendance tracking
+class SecureQrGenerator {
+  final CryptoService _cryptoService;
+  final NonceRepository _nonceRepository;
+  
+  // Default validity window of 15 minutes
+  final Duration validityWindow;
+  
+  SecureQrGenerator(
+    this._cryptoService, 
+    this._nonceRepository, {
+    this.validityWindow = const Duration(minutes: 15),
+  });
+  
+  /// Generates a new secure QR code payload
+  Future<QrCodePayload> generatePayload({
+    required String locationCode,
+  }) async {
+    final sessionId = const Uuid().v4();
+    final timestamp = DateTime.now();
+    final nonce = _generateNonce();
+    
+    // Generate content to sign
+    final contentToSign = '$sessionId|${timestamp.toIso8601String()}|$nonce|$locationCode';
+    
+    // Generate digital signature
+    final signature = await _cryptoService.sign(contentToSign);
+    
+    // Save nonce to prevent replay attacks
+    await _nonceRepository.saveNonce(nonce, timestamp.add(validityWindow));
+    
+    return QrCodePayload(
+      sessionId: sessionId,
+      timestamp: timestamp,
+      nonce: nonce,
+      locationCode: locationCode,
+      signature: signature,
+    );
+  }
+  
+  /// Generates a random nonce
+  String _generateNonce() {
+    final random = Random.secure();
+    final values = List<int>.generate(16, (i) => random.nextInt(256));
+    return base64Url.encode(values);
+  }
+  
+  /// Generates a QR code widget
+  Widget generateQrCodeWidget(String data, {double size = 200.0}) {
+    return QrImage(
+      data: data,
+      version: QrVersions.auto,
+      size: size,
+      errorCorrectionLevel: QrErrorCorrectLevel.H,
+      padding: EdgeInsets.all(20),
+      backgroundColor: Colors.white,
+    );
+  }
+  
+  /// Generates a complete QR code widget with embedded payload
+  Future<Widget> generateAttendanceQrCode({
+    required String locationCode,
+    double size = 200.0,
+  }) async {
+    final payload = await generatePayload(locationCode: locationCode);
+    final qrData = payload.toQrString();
+    
+    return generateQrCodeWidget(qrData, size: size);
+  }
+}
+```
+
+### QR Code Validator
+
+```dart
+/// Validates QR codes for the attendance system
+class QrCodeValidator {
+  final CryptoService _cryptoService;
+  final NonceRepository _nonceRepository;
+  
+  // Default validity window of 15 minutes
+  final Duration validityWindow;
+  
+  QrCodeValidator(
+    this._cryptoService, 
+    this._nonceRepository, {
+    this.validityWindow = const Duration(minutes: 15),
+  });
+  
+  /// Validates a QR code payload
+  Future<ValidationResult> validatePayload(QrCodePayload payload) async {
+    // Step 1: Validate signature
+    final contentToVerify = payload.getContentForSignature();
+    final isSignatureValid = await _cryptoService.verify(
+      contentToVerify, 
+      payload.signature,
+    );
+    
+    if (!isSignatureValid) {
+      return ValidationResult(
+        isValid: false,
+        errorCode: ValidationErrorCode.invalidSignature,
+        message: 'QR code signature is invalid',
+      );
+    }
+    
+    // Step 2: Validate timestamp
+    final now = DateTime.now();
+    final codeAge = now.difference(payload.timestamp);
+    
+    if (codeAge > validityWindow) {
+      return ValidationResult(
+        isValid: false,
+        errorCode: ValidationErrorCode.expired,
+        message: 'QR code has expired (valid for $validityWindow)',
+      );
+    }
+    
+    // Step 3: Validate nonce (prevent replay attacks)
+    final isNonceUsed = await _nonceRepository.isNonceUsed(payload.nonce);
+    
+    if (isNonceUsed) {
+      return ValidationResult(
+        isValid: false,
+        errorCode: ValidationErrorCode.usedNonce,
+        message: 'QR code has already been used',
+      );
+    }
+    
+    // Mark nonce as used
+    await _nonceRepository.markNonceAsUsed(payload.nonce);
+    
+    // All validations passed
+    return ValidationResult(
+      isValid: true,
+      errorCode: null,
+      message: 'QR code is valid',
+      payload: payload,
+    );
+  }
+  
+  /// Validates a QR code from its string representation
+  Future<ValidationResult> validateQrString(String qrString) async {
+    final payload = QrCodePayload.fromQrString(qrString);
+    
+    if (payload == null) {
+      return ValidationResult(
+        isValid: false,
+        errorCode: ValidationErrorCode.invalidFormat,
+        message: 'Invalid QR code format',
+      );
+    }
+    
+    return validatePayload(payload);
+  }
+  
+  /// Validates a QR code with additional location check
+  Future<ValidationResult> validateWithLocation({
+    required QrCodePayload payload,
+    required Position currentPosition,
+    required double maxDistanceMeters,
+  }) async {
+    // First perform standard validation
+    final baseResult = await validatePayload(payload);
+    
+    if (!baseResult.isValid) {
+      return baseResult;
+    }
+    
+    // Then verify location if geo validation is required
+    final locationValid = await validateLocation(
+      payload: payload,
+      currentPosition: currentPosition,
+      maxDistanceMeters: maxDistanceMeters,
+    );
+    
+    if (!locationValid) {
+      return ValidationResult(
+        isValid: false,
+        errorCode: ValidationErrorCode.invalidLocation,
+        message: 'Your location does not match the expected location',
+      );
+    }
+    
+    return baseResult;
+  }
+  
+  /// Validates the user's location against the expected location
+  Future<bool> validateLocation({
+    required QrCodePayload payload,
+    required Position currentPosition,
+    required double maxDistanceMeters,
+  }) async {
+    // Implement location validation based on your business rules
+    // This is a simplified example
+    try {
+      // Get expected coordinates from locationCode
+      final expectedLocation = await getLocationFromCode(payload.locationCode);
+      
+      // Calculate distance between current and expected location
+      final distanceInMeters = Geolocator.distanceBetween(
+        currentPosition.latitude,
+        currentPosition.longitude,
+        expectedLocation.latitude,
+        expectedLocation.longitude,
+      );
+      
+      return distanceInMeters <= maxDistanceMeters;
+    } catch (e) {
+      // If location validation fails, return false
+      return false;
+    }
+  }
+  
+  /// Gets location coordinates from a location code
+  Future<Position> getLocationFromCode(String locationCode) async {
+    // Implement your location code to coordinates mapping
+    // This could be a database lookup or API call
+    throw UnimplementedError('Location lookup not implemented');
+  }
+}
+
+/// Result of a QR code validation
+class ValidationResult {
+  final bool isValid;
+  final ValidationErrorCode? errorCode;
+  final String message;
+  final QrCodePayload? payload;
+  
+  const ValidationResult({
+    required this.isValid,
+    this.errorCode,
+    required this.message,
+    this.payload,
+  });
+}
+
+/// Error codes for validation failures
+enum ValidationErrorCode {
+  invalidFormat,
+  invalidSignature,
+  expired,
+  usedNonce,
+  invalidLocation,
+}
+```
+
+### Nonce Repository for Replay Prevention
+
+```dart
+/// Repository for tracking used nonces to prevent replay attacks
+class NonceRepository {
+  final Database _database;
+  
+  NonceRepository(this._database);
+  
+  /// Saves a new nonce with expiration
+  Future<void> saveNonce(String nonce, DateTime expiration) async {
+    await _database.into(_database.nonces).insert(
+      NoncesCompanion.insert(
+        nonce: nonce,
+        expiresAt: expiration,
+        isUsed: false,
+      ),
+    );
+  }
+  
+  /// Checks if a nonce has been used
+  Future<bool> isNonceUsed(String nonce) async {
+    final result = await (_database.select(_database.nonces)
+      ..where((n) => n.nonce.equals(nonce)))
+      .getSingleOrNull();
+    
+    return result?.isUsed ?? false;
+  }
+  
+  /// Marks a nonce as used
+  Future<void> markNonceAsUsed(String nonce) async {
+    await (_database.update(_database.nonces)
+      ..where((n) => n.nonce.equals(nonce)))
+      .write(const NoncesCompanion(isUsed: Value(true)));
+  }
+  
+  /// Cleans up expired nonces
+  Future<void> cleanupExpiredNonces() async {
+    final now = DateTime.now();
+    
+    await (_database.delete(_database.nonces)
+      ..where((n) => n.expiresAt.isSmallerThanValue(now)))
+      .go();
+  }
+}
+```
+
+### Crypto Service for Digital Signatures
+
+```dart
+/// Service for cryptographic operations
+class CryptoService {
+  final FlutterSecureStorage _secureStorage;
+  
+  // Keys for storing cryptographic material
+  static const String _privateKeyKey = 'qr_signing_private_key';
+  static const String _publicKeyKey = 'qr_signing_public_key';
+  
+  CryptoService(this._secureStorage);
+  
+  /// Initializes the crypto service by generating keys if needed
+  Future<void> initialize() async {
+    final hasKeys = await _hasKeys();
+    
+    if (!hasKeys) {
+      await _generateKeyPair();
+    }
+  }
+  
+  /// Checks if keys are already stored
+  Future<bool> _hasKeys() async {
+    final privateKey = await _secureStorage.read(key: _privateKeyKey);
+    return privateKey != null;
+  }
+  
+  /// Generates a new RSA key pair
+  Future<void> _generateKeyPair() async {
+    // Generate an RSA key pair
+    final keyPair = await _generateRsaKeyPair();
+    
+    // Store the keys securely
+    await _secureStorage.write(
+      key: _privateKeyKey,
+      value: keyPair.privateKey,
+    );
+    
+    await _secureStorage.write(
+      key: _publicKeyKey,
+      value: keyPair.publicKey,
+    );
+  }
+  
+  /// Generates an RSA key pair
+  Future<KeyPair> _generateRsaKeyPair() async {
+    // Implement RSA key pair generation
+    // This is a simplified placeholder
+    throw UnimplementedError('RSA key pair generation not implemented');
+  }
+  
+  /// Signs data using the private key
+  Future<String> sign(String data) async {
+    final privateKeyStr = await _secureStorage.read(key: _privateKeyKey);
+    
+    if (privateKeyStr == null) {
+      throw Exception('Signing key not available');
+    }
+    
+    // Implement signing with the private key
+    // This is a simplified placeholder
+    throw UnimplementedError('Digital signature not implemented');
+  }
+  
+  /// Verifies a signature using the public key
+  Future<bool> verify(String data, String signature) async {
+    final publicKeyStr = await _secureStorage.read(key: _publicKeyKey);
+    
+    if (publicKeyStr == null) {
+      throw Exception('Verification key not available');
+    }
+    
+    // Implement signature verification with the public key
+    // This is a simplified placeholder
+    throw UnimplementedError('Signature verification not implemented');
+  }
+}
+
+/// Simple key pair holder
+class KeyPair {
+  final String privateKey;
+  final String publicKey;
+  
+  const KeyPair({
+    required this.privateKey,
+    required this.publicKey,
+  });
+}
+```
+
+## QR Scanner Implementation
+
+```dart
+/// QR code scanner widget for attendance
+class AttendanceQrScanner extends StatefulWidget {
+  final Function(ValidationResult) onScanResult;
+  
+  const AttendanceQrScanner({
+    Key? key,
+    required this.onScanResult,
+  }) : super(key: key);
+  
+  @override
+  _AttendanceQrScannerState createState() => _AttendanceQrScannerState();
+}
+
+class _AttendanceQrScannerState extends State<AttendanceQrScanner> {
+  final QrCodeValidator _validator;
+  bool _isScanning = true;
+  
+  _AttendanceQrScannerState() : _validator = GetIt.instance<QrCodeValidator>();
+  
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Expanded(
+          child: MobileScanner(
+            allowDuplicates: false,
+            controller: MobileScannerController(
+              facing: CameraFacing.back,
+              detectionSpeed: DetectionSpeed.normal,
+            ),
+            onDetect: _onDetect,
+          ),
+        ),
+        _buildOverlay(),
+      ],
+    );
+  }
+  
+  Widget _buildOverlay() {
+    return Container(
+      padding: EdgeInsets.all(16),
+      color: Colors.black.withOpacity(0.7),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            _isScanning ? Icons.qr_code_scanner : Icons.check_circle,
+            color: _isScanning ? Colors.white : Colors.green,
+          ),
+          SizedBox(width: 8),
+          Text(
+            _isScanning ? 'Scanning QR Code...' : 'QR Code Detected',
+            style: TextStyle(color: Colors.white),
+          ),
+        ],
+      ),
+    );
+  }
+  
+  Future<void> _onDetect(BarcodeCapture capture) async {
+    if (!_isScanning) return;
+    
+    final barcodes = capture.barcodes;
+    
+    if (barcodes.isEmpty) return;
+    
+    // Process only the first barcode
+    final barcode = barcodes.first;
+    final value = barcode.rawValue;
+    
+    if (value == null) return;
+    
+    // Temporarily disable scanning to prevent multiple detections
+    setState(() {
+      _isScanning = false;
+    });
+    
+    // Validate the QR code
+    final result = await _validator.validateQrString(value);
+    
+    // Call the callback with the result
+    widget.onScanResult(result);
+    
+    // Re-enable scanning after a delay
+    Future.delayed(Duration(seconds: 3), () {
+      if (mounted) {
+        setState(() {
+          _isScanning = true;
+        });
+      }
+    });
+  }
+}
+```
+
+## Business Rules for QR Security Validation
+
+1. **Validity Window**
+   - QR codes must expire after 15 minutes by default
+   - The validity window should be configurable by administrators
+   - Attendance status should be determined based on the QR timestamp
+
+2. **Digital Signature**
+   - Each QR code must be digitally signed using RSA asymmetric encryption
+   - Private keys must be stored securely in FlutterSecureStorage
+   - Signatures must be verified before accepting attendance records
+
+3. **Nonce Tracking**
+   - Each QR code must contain a unique, randomly generated nonce
+   - Nonces must be tracked to prevent replay attacks
+   - Used nonces must be marked as used and stored for the validity window
+   - Expired nonces should be periodically cleaned up
+
+4. **Timestamp Integrity**
+   - QR timestamp must be included in the signed content
+   - Time difference should be calculated based on the device's time
+   - Grace periods for time synchronization issues should be configurable
+   - Timestamps must be in ISO 8601 format with timezone information
+
+5. **Geolocation Verification**
+   - Location validation should be optional but enforced when available
+   - Maximum allowed distance from expected location should be configurable
+   - Location information should be encoded to protect privacy
+   - Location verification should be skipped when GPS is unavailable
+
+## Testing Approach
+
+```dart
+void main() {
+  group('QR Code Validation', () {
+    late MockCryptoService mockCryptoService;
+    late MockNonceRepository mockNonceRepository;
+    late QrCodeValidator validator;
+    
+    setUp(() {
+      mockCryptoService = MockCryptoService();
+      mockNonceRepository = MockNonceRepository();
+      validator = QrCodeValidator(
+        mockCryptoService,
+        mockNonceRepository,
+        validityWindow: const Duration(minutes: 15),
+      );
+    });
+    
+    test('should validate a valid QR code', () async {
+      // Arrange
+      final now = DateTime.now();
+      final payload = QrCodePayload(
+        sessionId: '12345',
+        timestamp: now, // Just created
+        nonce: 'unique-nonce',
+        locationCode: 'LOC001',
+        signature: 'valid-signature',
+      );
+      
+      when(mockCryptoService.verify(any, any)).thenAnswer((_) async => true);
+      when(mockNonceRepository.isNonceUsed(any)).thenAnswer((_) async => false);
+      
+      // Act
+      final result = await validator.validatePayload(payload);
+      
+      // Assert
+      expect(result.isValid, true);
+      expect(result.payload, payload);
+      verify(mockCryptoService.verify(any, 'valid-signature')).called(1);
+      verify(mockNonceRepository.isNonceUsed('unique-nonce')).called(1);
+      verify(mockNonceRepository.markNonceAsUsed('unique-nonce')).called(1);
+    });
+    
+    test('should reject expired QR code', () async {
+      // Arrange
+      final expired = DateTime.now().subtract(Duration(minutes: 20)); // 20 mins old
+      final payload = QrCodePayload(
+        sessionId: '12345',
+        timestamp: expired,
+        nonce: 'unique-nonce',
+        locationCode: 'LOC001',
+        signature: 'valid-signature',
+      );
+      
+      when(mockCryptoService.verify(any, any)).thenAnswer((_) async => true);
+      
+      // Act
+      final result = await validator.validatePayload(payload);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, ValidationErrorCode.expired);
+    });
+    
+    test('should reject QR code with invalid signature', () async {
+      // Arrange
+      final now = DateTime.now();
+      final payload = QrCodePayload(
+        sessionId: '12345',
+        timestamp: now,
+        nonce: 'unique-nonce',
+        locationCode: 'LOC001',
+        signature: 'invalid-signature',
+      );
+      
+      when(mockCryptoService.verify(any, any)).thenAnswer((_) async => false);
+      
+      // Act
+      final result = await validator.validatePayload(payload);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, ValidationErrorCode.invalidSignature);
+    });
+    
+    test('should reject QR code with used nonce', () async {
+      // Arrange
+      final now = DateTime.now();
+      final payload = QrCodePayload(
+        sessionId: '12345',
+        timestamp: now,
+        nonce: 'used-nonce',
+        locationCode: 'LOC001',
+        signature: 'valid-signature',
+      );
+      
+      when(mockCryptoService.verify(any, any)).thenAnswer((_) async => true);
+      when(mockNonceRepository.isNonceUsed(any)).thenAnswer((_) async => true);
+      
+      // Act
+      final result = await validator.validatePayload(payload);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, ValidationErrorCode.usedNonce);
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Key Protection**
+   - Store cryptographic keys in FlutterSecureStorage, not in shared preferences
+   - Implement key rotation policies for regular key updates
+   - Invalidate keys if a security breach is suspected
+   - Use asymmetric cryptography (RSA) for better security
+
+2. **Nonce Management**
+   - Use cryptographically secure random number generation for nonces
+   - Implement efficient storage and retrieval for nonce tracking
+   - Implement background cleanup of expired nonces
+   - Size nonces appropriately (16 bytes minimum recommended)
+
+3. **Time Synchronization**
+   - Consider using server time when possible to avoid device time manipulation
+   - Implement NTP synchronization where feasible
+   - Add grace periods for minor time differences
+   - Log significant time discrepancies as potential security issues
+
+4. **Fail Securely**
+   - Default to rejection when validation components fail
+   - Implement proper error handling for all cryptographic operations
+   - Log validation failures with appropriate context
+   - Provide clear error messages to users without revealing security details
+
+5. **Performance Considerations**
+   - Optimize cryptographic operations to minimize UI lag
+   - Use appropriate QR code version and error correction levels
+   - Cache cryptographic objects when appropriate
+
+   - Consider background validation for better user experience

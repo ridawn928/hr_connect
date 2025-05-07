@@ -1,0 +1,724 @@
+---
+description: 
+globs: /qr_*.dart,/attendance_.dart,**/scan.dart,/validation*.dart,/features/attendance/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's QR Code Attendance System
+globs: **/qr_*.dart,**/attendance_*.dart,**/scan*.dart,**/validation*.dart,**/features/attendance/**/*.dart
+alwaysApply: false
+---
+
+# QR Code Attendance System
+
+This rule provides guidance for implementing the QR Code Attendance System in HR Connect - a Flutter-based workforce management solution with offline-first capabilities.
+
+## Feature Overview
+
+The QR Code Attendance System enables employees to record attendance through secure time-based QR codes, with support for:
+- Time-based QR codes with embedded timestamps and digital signatures
+- Offline validation within configurable time windows (15 minutes default)
+- Multiple attendance validation methods (employee-to-QR, QR-to-employee)
+- Status classification (ON_TIME, LATE, ABSENT, HALF_DAY, APPROVED_LEAVE) 
+- Configurable grace periods per branch and employee
+- Geolocation verification during attendance scanning
+- Nonce tracking to prevent replay attacks
+
+## Required Packages
+
+```yaml
+dependencies:
+  # QR Code Related
+  mobile_scanner: ^6.0.10   # For QR code scanning
+  qr_flutter: ^4.1.0        # For QR code generation
+  crypto: ^3.0.3            # For digital signatures
+  
+  # Data & Storage
+  drift: ^2.26.1            # Local database for attendance records
+  flutter_secure_storage: ^9.2.4  # For secure storage of keys
+  
+  # State Management
+  riverpod: ^2.6.1          # State management
+  flutter_riverpod: ^2.6.1  # Flutter integration for Riverpod
+  
+  # Utils
+  geolocator: ^9.0.2        # For geolocation verification
+  intl: ^0.20.2             # For date/time formatting
+  uuid: ^3.0.7              # For unique identifiers
+  dartz: ^0.10.1            # Functional error handling
+```
+
+## Domain Models
+
+### QR Code Entity
+
+```dart
+/// Represents a QR code used for attendance verification
+class QrCode {
+  final String id;
+  final DateTime timestamp;
+  final String signature;
+  final String branchId;
+  final String nonce;
+  final GeoPoint? location;
+  
+  const QrCode({
+    required this.id,
+    required this.timestamp,
+    required this.signature,
+    required this.branchId,
+    required this.nonce,
+    this.location,
+  });
+  
+  /// Creates a QR code with the current timestamp
+  factory QrCode.create({
+    required String branchId, 
+    required SignatureService signatureService,
+    GeoPoint? location,
+  }) {
+    final id = const Uuid().v4();
+    final timestamp = DateTime.now();
+    final nonce = const Uuid().v4();
+    
+    final signature = signatureService.signQrCode(
+      id: id,
+      timestamp: timestamp,
+      branchId: branchId,
+      nonce: nonce,
+    );
+    
+    return QrCode(
+      id: id,
+      timestamp: timestamp,
+      signature: signature,
+      branchId: branchId,
+      nonce: nonce,
+      location: location,
+    );
+  }
+  
+  /// Serializes QR code to JSON string for embedding in QR
+  String toQrString() {
+    return jsonEncode({
+      'id': id,
+      'timestamp': timestamp.toIso8601String(),
+      'signature': signature,
+      'branchId': branchId,
+      'nonce': nonce,
+      'location': location != null ? {
+        'latitude': location!.latitude,
+        'longitude': location!.longitude,
+      } : null,
+    });
+  }
+  
+  /// Deserializes QR code from JSON string
+  factory QrCode.fromQrString(String qrString) {
+    final json = jsonDecode(qrString);
+    return QrCode(
+      id: json['id'],
+      timestamp: DateTime.parse(json['timestamp']),
+      signature: json['signature'],
+      branchId: json['branchId'],
+      nonce: json['nonce'],
+      location: json['location'] != null ? 
+        GeoPoint(
+          json['location']['latitude'], 
+          json['location']['longitude']
+        ) : null,
+    );
+  }
+}
+```
+
+### Attendance Record Entity
+
+```dart
+/// Represents an employee attendance record
+class AttendanceRecord {
+  final String id;
+  final String employeeId;
+  final DateTime timestamp;
+  final String qrCodeId;
+  final AttendanceStatus status;
+  final SyncStatus syncStatus;
+  final GeoPoint? location;
+  
+  const AttendanceRecord({
+    required this.id,
+    required this.employeeId,
+    required this.timestamp,
+    required this.qrCodeId,
+    required this.status,
+    this.syncStatus = SyncStatus.synced,
+    this.location,
+  });
+  
+  /// Creates an optimistic pending attendance record
+  factory AttendanceRecord.pending(
+    QrCode qrCode, 
+    String employeeId, 
+    GeoPoint? location,
+  ) {
+    return AttendanceRecord(
+      id: const Uuid().v4(),
+      employeeId: employeeId,
+      timestamp: DateTime.now(),
+      qrCodeId: qrCode.id,
+      status: AttendanceStatus.pending,
+      syncStatus: SyncStatus.pending,
+      location: location,
+    );
+  }
+}
+
+/// Possible attendance statuses
+enum AttendanceStatus {
+  pending,
+  onTime,
+  late,
+  absent,
+  halfDay,
+  approvedLeave
+}
+
+/// Sync status for offline-first functionality
+enum SyncStatus {
+  pending,
+  synced,
+  error
+}
+```
+
+## QR Code Generation
+
+### Implementation
+
+```dart
+class QrCodeGenerator {
+  final SignatureService _signatureService;
+  
+  QrCodeGenerator(this._signatureService);
+  
+  /// Generates a QR code widget for display
+  Widget generateQrCodeWidget({
+    required String branchId,
+    required double size,
+    GeoPoint? location,
+  }) {
+    final qrCode = QrCode.create(
+      branchId: branchId,
+      signatureService: _signatureService,
+      location: location,
+    );
+    
+    return QrImageView(
+      data: qrCode.toQrString(),
+      version: QrVersions.auto,
+      size: size,
+      backgroundColor: Colors.white,
+      errorCorrectionLevel: QrErrorCorrectLevel.H,
+    );
+  }
+  
+  /// Generates a new QR code every minute for security
+  Stream<QrCode> streamQrCodes({
+    required String branchId,
+    GeoPoint? location,
+  }) {
+    return Stream.periodic(
+      const Duration(minutes: 1),
+      (_) => QrCode.create(
+        branchId: branchId,
+        signatureService: _signatureService,
+        location: location,
+      ),
+    ).startWith(QrCode.create(
+      branchId: branchId,
+      signatureService: _signatureService,
+      location: location,
+    ));
+  }
+}
+```
+
+## QR Code Scanning and Validation
+
+### Scanning UI Component
+
+```dart
+class QrScannerScreen extends ConsumerStatefulWidget {
+  const QrScannerScreen({Key? key}) : super(key: key);
+
+  @override
+  ConsumerState<QrScannerScreen> createState() => _QrScannerScreenState();
+}
+
+class _QrScannerScreenState extends ConsumerState<QrScannerScreen> {
+  MobileScannerController? _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = MobileScannerController(
+      formats: [BarcodeFormat.qrCode],
+      detectionSpeed: DetectionSpeed.normal,
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Scan Attendance QR'),
+        actions: [
+          IconButton(
+            icon: ValueListenableBuilder(
+              valueListenable: _controller?.torchState ?? ValueNotifier(TorchState.off),
+              builder: (context, state, child) {
+                switch (state as TorchState) {
+                  case TorchState.off:
+                    return const Icon(Icons.flash_off);
+                  case TorchState.on:
+                    return const Icon(Icons.flash_on);
+                }
+              },
+            ),
+            onPressed: () => _controller?.toggleTorch(),
+          ),
+        ],
+      ),
+      body: Stack(
+        children: [
+          MobileScanner(
+            controller: _controller,
+            onDetect: (capture) {
+              final List<Barcode> barcodes = capture.barcodes;
+              for (final barcode in barcodes) {
+                if (barcode.rawValue != null) {
+                  ref.read(attendanceControllerProvider.notifier)
+                    .processQrCode(barcode.rawValue!);
+                }
+              }
+            },
+          ),
+          CustomPaint(
+            painter: ScannerOverlay(),
+            child: Container(),
+          ),
+          Positioned(
+            bottom: 16,
+            left: 0,
+            right: 0,
+            child: Consumer(
+              builder: (context, ref, child) {
+                final state = ref.watch(attendanceControllerProvider);
+                return state.maybeWhen(
+                  loading: () => const CircularProgressIndicator.adaptive(),
+                  success: (record) => SuccessWidget(record: record),
+                  failure: (failure) => ErrorWidget(failure: failure),
+                  orElse: () => const SizedBox.shrink(),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+```
+
+### QR Code Validation Service
+
+```dart
+class QrCodeValidator {
+  final SignatureService _signatureService;
+  final NonceRepository _nonceRepository;
+  final Duration validityWindow;
+  final double maxDistanceMeters;
+  
+  QrCodeValidator({
+    required SignatureService signatureService,
+    required NonceRepository nonceRepository,
+    this.validityWindow = const Duration(minutes: 15),
+    this.maxDistanceMeters = 100,
+  }) : 
+    _signatureService = signatureService,
+    _nonceRepository = nonceRepository;
+  
+  /// Validates a QR code string
+  Future<Either<QrValidationFailure, QrCode>> validate(String qrString) async {
+    try {
+      // Parse QR code
+      final qrCode = QrCode.fromQrString(qrString);
+      
+      // Verify signature
+      final isSignatureValid = _signatureService.verifyQrCode(
+        id: qrCode.id,
+        timestamp: qrCode.timestamp,
+        branchId: qrCode.branchId,
+        nonce: qrCode.nonce,
+        signature: qrCode.signature,
+      );
+      
+      if (!isSignatureValid) {
+        return left(const QrValidationFailure.invalidSignature());
+      }
+      
+      // Check timestamp validity
+      final now = DateTime.now();
+      final difference = now.difference(qrCode.timestamp);
+      
+      if (difference > validityWindow) {
+        return left(const QrValidationFailure.expired());
+      }
+      
+      // Check if nonce was used before (replay attack prevention)
+      final isNonceUsed = await _nonceRepository.checkNonce(qrCode.nonce);
+      if (isNonceUsed) {
+        return left(const QrValidationFailure.usedNonce());
+      }
+      
+      // Verify location if available
+      if (qrCode.location != null) {
+        final userLocation = await _getCurrentLocation();
+        final distance = _calculateDistance(
+          userLocation, 
+          qrCode.location!,
+        );
+        
+        if (distance > maxDistanceMeters) {
+          return left(QrValidationFailure.invalidLocation(
+            actualDistance: distance,
+            maxDistance: maxDistanceMeters,
+          ));
+        }
+      }
+      
+      // Record nonce usage
+      await _nonceRepository.recordNonce(qrCode.nonce);
+      
+      return right(qrCode);
+    } on FormatException {
+      return left(const QrValidationFailure.invalidFormat());
+    } catch (e) {
+      return left(QrValidationFailure.unexpected(e.toString()));
+    }
+  }
+  
+  Future<GeoPoint> _getCurrentLocation() async {
+    final position = await Geolocator.getCurrentPosition();
+    return GeoPoint(position.latitude, position.longitude);
+  }
+  
+  double _calculateDistance(GeoPoint point1, GeoPoint point2) {
+    return Geolocator.distanceBetween(
+      point1.latitude, 
+      point1.longitude, 
+      point2.latitude, 
+      point2.longitude,
+    );
+  }
+}
+```
+
+## Status Classification
+
+```dart
+class AttendanceStatusCalculator {
+  final Duration gracePeriod;
+  final Duration halfDayCutoff;
+  
+  AttendanceStatusCalculator({
+    this.gracePeriod = const Duration(minutes: 5),
+    this.halfDayCutoff = const Duration(hours: 4),
+  });
+  
+  /// Calculate attendance status based on expected and actual times
+  AttendanceStatus calculateStatus({
+    required DateTime expectedTime,
+    required DateTime actualTime,
+  }) {
+    final difference = actualTime.difference(expectedTime);
+    
+    if (difference.isNegative || difference <= gracePeriod) {
+      return AttendanceStatus.onTime;
+    } else if (difference <= halfDayCutoff) {
+      return AttendanceStatus.late;
+    } else {
+      return AttendanceStatus.halfDay;
+    }
+  }
+  
+  /// Check if employee is absent (no check-in by end of day)
+  bool isAbsent(DateTime expectedTime) {
+    final now = DateTime.now();
+    final endOfDay = DateTime(
+      expectedTime.year,
+      expectedTime.month,
+      expectedTime.day,
+      23, 59, 59,
+    );
+    
+    return now.isAfter(endOfDay);
+  }
+}
+```
+
+## Business Rules
+
+1. **QR Code Validity**: 
+   - QR codes are valid for 15 minutes after generation (configurable)
+   - A new QR code is generated every minute for security
+   - Each QR code includes a digital signature for verification
+
+2. **Attendance Status Rules**:
+   - ON_TIME: Check-in within grace period (default 5 minutes)
+   - LATE: Check-in after grace period but before half-day cutoff
+   - HALF_DAY: Check-in after half-day cutoff (default 4 hours)
+   - ABSENT: No check-in recorded for the day
+   - APPROVED_LEAVE: Employee has an approved leave for the day
+
+3. **Security Rules**:
+   - Each QR code contains a unique nonce to prevent replay attacks
+   - Signatures are verified to ensure QR code authenticity
+   - Location verification is optional but recommended (within 100 meters)
+   - Device verification ensures the employee is using a registered device
+
+4. **Offline Functionality**:
+   - Attendance can be recorded offline and synced later
+   - Local verification of QR codes is possible without internet
+   - Time-based validation works offline using device time
+   - Attendance records are marked with sync status
+
+5. **Permission Rules**:
+   - EMPLOYEE: Can scan QR codes for check-in/out
+   - BRANCH_MANAGER: Can view team attendance records
+   - PAYROLL_PORTAL: Can generate QR codes and view all attendance
+   - HR_PORTAL: Has system-wide access and override capabilities
+
+## Repositories
+
+### Attendance Repository Interface
+
+```dart
+abstract class AttendanceRepository {
+  /// Submit attendance using a validated QR code
+  Future<Either<AttendanceFailure, AttendanceRecord>> submitAttendance({
+    required QrCode qrCode,
+    required String employeeId,
+    GeoPoint? location,
+  });
+  
+  /// Get attendance history for an employee
+  Future<Either<AttendanceFailure, List<AttendanceRecord>>> getAttendanceHistory({
+    required String employeeId,
+    required DateTimeRange dateRange,
+  });
+  
+  /// Get attendance summary for a team/branch
+  Future<Either<AttendanceFailure, AttendanceSummary>> getAttendanceSummary({
+    required String branchId,
+    required DateTime date,
+  });
+  
+  /// Stream attendance records for today (for real-time updates)
+  Stream<Either<AttendanceFailure, List<AttendanceRecord>>> watchTodayAttendance({
+    required String branchId,
+  });
+}
+```
+
+### Nonce Repository Interface
+
+```dart
+abstract class NonceRepository {
+  /// Check if a nonce has been used before
+  Future<bool> checkNonce(String nonce);
+  
+  /// Record a nonce as used
+  Future<void> recordNonce(String nonce);
+  
+  /// Clean up old nonces (older than 7 days)
+  Future<void> cleanupOldNonces();
+}
+```
+
+## Testing Guidelines
+
+### Unit Testing QR Validation
+
+```dart
+void main() {
+  late QrCodeValidator validator;
+  late MockSignatureService mockSignatureService;
+  late MockNonceRepository mockNonceRepository;
+  
+  setUp(() {
+    mockSignatureService = MockSignatureService();
+    mockNonceRepository = MockNonceRepository();
+    validator = QrCodeValidator(
+      signatureService: mockSignatureService,
+      nonceRepository: mockNonceRepository,
+      validityWindow: const Duration(minutes: 15),
+    );
+  });
+  
+  group('QrCodeValidator', () {
+    test('should reject QR codes with invalid signatures', () async {
+      // Arrange
+      final qrCode = QrCode.create(
+        branchId: 'branch-1',
+        signatureService: mockSignatureService,
+      );
+      
+      when(() => mockSignatureService.verifyQrCode(
+        id: any(named: 'id'),
+        timestamp: any(named: 'timestamp'),
+        branchId: any(named: 'branchId'),
+        nonce: any(named: 'nonce'),
+        signature: any(named: 'signature'),
+      )).thenReturn(false);
+      
+      // Act
+      final result = await validator.validate(qrCode.toQrString());
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<InvalidSignatureFailure>()),
+        (_) => fail('Should return a failure'),
+      );
+    });
+    
+    test('should reject expired QR codes', () async {
+      // Arrange
+      final expiredTime = DateTime.now().subtract(const Duration(minutes: 20));
+      final qrCode = QrCode(
+        id: 'test-id',
+        timestamp: expiredTime,
+        signature: 'test-signature',
+        branchId: 'branch-1',
+        nonce: 'test-nonce',
+      );
+      
+      when(() => mockSignatureService.verifyQrCode(
+        id: any(named: 'id'),
+        timestamp: any(named: 'timestamp'),
+        branchId: any(named: 'branchId'),
+        nonce: any(named: 'nonce'),
+        signature: any(named: 'signature'),
+      )).thenReturn(true);
+      
+      when(() => mockNonceRepository.checkNonce(any()))
+        .thenAnswer((_) async => false);
+      
+      // Act
+      final result = await validator.validate(qrCode.toQrString());
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<ExpiredQrCodeFailure>()),
+        (_) => fail('Should return a failure'),
+      );
+    });
+    
+    // Additional tests for nonce validation, location verification, etc.
+  });
+}
+```
+
+### Widget Testing Scanner UI
+
+```dart
+void main() {
+  testWidgets('QrScannerScreen shows success message on valid QR scan', 
+      (WidgetTester tester) async {
+    // Arrange
+    final mockAttendanceController = MockAttendanceController();
+    
+    when(() => mockAttendanceController.processQrCode(any()))
+        .thenAnswer((_) async => right(AttendanceRecord(
+          id: 'test-id',
+          employeeId: 'employee-1',
+          timestamp: DateTime.now(),
+          qrCodeId: 'qr-1',
+          status: AttendanceStatus.onTime,
+        )));
+    
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          attendanceControllerProvider.overrideWithValue(mockAttendanceController),
+        ],
+        child: const MaterialApp(
+          home: QrScannerScreen(),
+        ),
+      ),
+    );
+    
+    // Simulate QR code detection
+    final mobileScanner = find.byType(MobileScanner);
+    expect(mobileScanner, findsOneWidget);
+    
+    // Trigger barcode detection (this is a simplified version)
+    final mobileScannerState = tester.state<MobileScannerState>(mobileScanner);
+    mobileScannerState.onDetect(Barcode(
+      rawValue: '{"id":"test-id","timestamp":"2025-05-06T10:00:00.000Z",...}',
+      format: BarcodeFormat.qrCode,
+      corners: [],
+    ));
+    
+    // Let the UI update
+    await tester.pumpAndSettle();
+    
+    // Verify success message is shown
+    expect(find.text('Check-in Successful!'), findsOneWidget);
+    expect(find.text('Status: On Time'), findsOneWidget);
+  });
+  
+  // Additional tests for error states, loading states, etc.
+}
+```
+
+## Implementation Best Practices
+
+1. **Security First**:
+   - Never skip signature verification, even in offline mode
+   - Store encryption keys securely using Flutter Secure Storage
+   - Implement proper error handling for security exceptions
+   - Log security-related events for audit purposes
+
+2. **Performance**:
+   - Optimize QR scanning for quick detection
+   - Use efficient cryptographic algorithms
+   - Cache validation results when appropriate
+   - Minimize battery usage during scanning
+
+3. **Offline Support**:
+   - Store validation parameters locally for offline use
+   - Implement proper sync status indicators
+   - Handle conflicts during synchronization
+   - Test thoroughly with airplane mode
+
+4. **User Experience**:
+   - Provide clear feedback during scanning
+   - Show helpful error messages
+   - Add visual indicators for scan area
+   - Include a torch toggle for low-light conditions
+
+5. **Testing**:
+   - Test all validation rules thoroughly
+   - Test with different time zones and device times
+   - Verify security features with penetration testing
+
+   - Test performance with large attendance datasets

@@ -1,0 +1,1020 @@
+---
+description: Enforces Test-Driven Development (TDD) practices for HR Connect, ensuring comprehensive test coverage across domain, data, and presentation layers before implementation.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces Test-Driven Development (TDD) practices for HR Connect, ensuring comprehensive test coverage across domain, data, and presentation layers before implementation.
+globs: **/*.dart,**/*_test.dart
+alwaysApply: false
+---
+
+# Test-Driven Development (TDD)
+
+This rule provides guidance for implementing Test-Driven Development (TDD) in HR Connect, ensuring robust test coverage across all layers before implementing production code.
+
+## Overview
+
+HR Connect follows a strict TDD approach with the following key principles:
+- Write tests FIRST before implementing production code
+- Run tests to verify they fail initially (Red phase)
+- Implement the minimum code to make tests pass (Green phase)
+- Refactor while maintaining passing tests (Refactor phase)
+- Apply consistent test patterns for each architectural layer
+- Structure tests to mirror the production code organization
+
+## Required Packages
+
+```yaml
+dev_dependencies:
+  # Testing
+  flutter_test:
+    sdk: flutter
+  test: ^1.24.9                # Core testing framework
+  mockito: ^5.4.4              # For mocking dependencies
+  mocktail: ^1.0.1             # Simplified mocking framework
+  riverpod_test: ^2.3.4        # For testing Riverpod providers
+  golden_toolkit: ^1.0.0       # For visual regression testing
+  patrol: ^2.3.1               # End-to-end testing framework
+  integration_test:
+    sdk: flutter
+```
+
+## TDD Workflow
+
+The TDD workflow for HR Connect consists of three phases:
+
+1. **Red Phase**:
+   - Write tests that define expected behavior
+   - Ensure tests fail before implementation
+   - Clearly define inputs, outputs, and edge cases
+
+2. **Green Phase**:
+   - Write the minimum code required to make tests pass
+   - Focus on functionality, not optimality
+   - Do not implement features not covered by tests
+
+3. **Refactor Phase**:
+   - Improve code quality without changing behavior
+   - Maintain passing tests during refactoring
+   - Apply design patterns and optimization where needed
+
+## Domain Layer Testing
+
+Domain layer tests focus on business rules and use cases:
+
+```dart
+// File: test/features/attendance/domain/entities/attendance_record_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+
+void main() {
+  group('AttendanceRecord', () {
+    test('should create valid AttendanceRecord', () {
+      // Arrange
+      final timestamp = DateTime(2025, 5, 1, 9, 0);
+      
+      // Act
+      final record = AttendanceRecord(
+        id: 'test-id',
+        employeeId: 'employee-123',
+        timestamp: timestamp,
+        type: AttendanceType.checkIn,
+        status: AttendanceStatus.onTime,
+      );
+      
+      // Assert
+      expect(record.id, 'test-id');
+      expect(record.employeeId, 'employee-123');
+      expect(record.timestamp, timestamp);
+      expect(record.type, AttendanceType.checkIn);
+      expect(record.status, AttendanceStatus.onTime);
+    });
+    
+    test('should determine if attendance is on time', () {
+      // Arrange
+      final expectedTime = DateTime(2025, 5, 1, 9, 0);
+      final actualTime = DateTime(2025, 5, 1, 9, 3); // 3 minutes late
+      final gracePeriod = const Duration(minutes: 5);
+      
+      // Act
+      final isOnTime = AttendanceCalculator.isOnTime(
+        expectedTime: expectedTime,
+        actualTime: actualTime,
+        gracePeriod: gracePeriod,
+      );
+      
+      // Assert
+      expect(isOnTime, true);
+    });
+    
+    test('should determine if attendance is late', () {
+      // Arrange
+      final expectedTime = DateTime(2025, 5, 1, 9, 0);
+      final actualTime = DateTime(2025, 5, 1, 9, 7); // 7 minutes late
+      final gracePeriod = const Duration(minutes: 5);
+      
+      // Act
+      final isOnTime = AttendanceCalculator.isOnTime(
+        expectedTime: expectedTime,
+        actualTime: actualTime,
+        gracePeriod: gracePeriod,
+      );
+      
+      // Assert
+      expect(isOnTime, false);
+    });
+  });
+}
+```
+
+### Use Case Testing
+
+```dart
+// File: test/features/attendance/domain/usecases/submit_attendance_test.dart
+import 'package:dartz/dartz.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/domain/repositories/attendance_repository.dart';
+import 'package:hr_connect/features/attendance/domain/usecases/submit_attendance.dart';
+
+import 'submit_attendance_test.mocks.dart';
+
+@GenerateMocks([AttendanceRepository])
+void main() {
+  late SubmitAttendance usecase;
+  late MockAttendanceRepository mockRepository;
+
+  setUp(() {
+    mockRepository = MockAttendanceRepository();
+    usecase = SubmitAttendance(mockRepository);
+  });
+
+  final tEmployeeId = 'employee-123';
+  final tBranchId = 'branch-456';
+  final tQrNonce = 'qr-789';
+  final tAttendanceType = AttendanceType.checkIn;
+  
+  final tAttendanceRecord = AttendanceRecord(
+    id: 'record-123',
+    employeeId: tEmployeeId,
+    timestamp: DateTime.now(),
+    type: tAttendanceType,
+    status: AttendanceStatus.onTime,
+  );
+
+  test('should submit attendance through the repository', () async {
+    // Arrange
+    when(mockRepository.submitAttendance(
+      employeeId: anyNamed('employeeId'),
+      branchId: anyNamed('branchId'),
+      type: anyNamed('type'),
+      qrNonce: anyNamed('qrNonce'),
+      deviceId: anyNamed('deviceId'),
+      location: anyNamed('location'),
+    )).thenAnswer((_) async => Right(tAttendanceRecord));
+
+    // Act
+    final result = await usecase(
+      employeeId: tEmployeeId,
+      branchId: tBranchId,
+      type: tAttendanceType,
+      qrNonce: tQrNonce,
+    );
+
+    // Assert
+    expect(result, Right(tAttendanceRecord));
+    verify(mockRepository.submitAttendance(
+      employeeId: tEmployeeId,
+      branchId: tBranchId,
+      type: tAttendanceType,
+      qrNonce: tQrNonce,
+      deviceId: null,
+      location: null,
+    ));
+    verifyNoMoreInteractions(mockRepository);
+  });
+
+  test('should return failure when repository fails', () async {
+    // Arrange
+    final tFailure = ServerFailure('Server error');
+    when(mockRepository.submitAttendance(
+      employeeId: anyNamed('employeeId'),
+      branchId: anyNamed('branchId'),
+      type: anyNamed('type'),
+      qrNonce: anyNamed('qrNonce'),
+      deviceId: anyNamed('deviceId'),
+      location: anyNamed('location'),
+    )).thenAnswer((_) async => Left(tFailure));
+
+    // Act
+    final result = await usecase(
+      employeeId: tEmployeeId,
+      branchId: tBranchId,
+      type: tAttendanceType,
+      qrNonce: tQrNonce,
+    );
+
+    // Assert
+    expect(result, Left(tFailure));
+  });
+}
+```
+
+## Data Layer Testing
+
+Data layer tests focus on repository implementations and data sources:
+
+```dart
+// File: test/features/attendance/data/repositories/attendance_repository_impl_test.dart
+import 'package:dartz/dartz.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:hr_connect/core/error/exceptions.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/core/network/network_info.dart';
+import 'package:hr_connect/features/attendance/data/datasources/attendance_local_data_source.dart';
+import 'package:hr_connect/features/attendance/data/datasources/attendance_remote_data_source.dart';
+import 'package:hr_connect/features/attendance/data/models/attendance_record_model.dart';
+import 'package:hr_connect/features/attendance/data/repositories/attendance_repository_impl.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+
+import 'attendance_repository_impl_test.mocks.dart';
+
+@GenerateMocks([
+  AttendanceLocalDataSource,
+  AttendanceRemoteDataSource,
+  NetworkInfo,
+])
+void main() {
+  late AttendanceRepositoryImpl repository;
+  late MockAttendanceLocalDataSource mockLocalDataSource;
+  late MockAttendanceRemoteDataSource mockRemoteDataSource;
+  late MockNetworkInfo mockNetworkInfo;
+
+  setUp(() {
+    mockLocalDataSource = MockAttendanceLocalDataSource();
+    mockRemoteDataSource = MockAttendanceRemoteDataSource();
+    mockNetworkInfo = MockNetworkInfo();
+    repository = AttendanceRepositoryImpl(
+      mockLocalDataSource,
+      mockRemoteDataSource,
+      mockNetworkInfo,
+    );
+  });
+
+  final tEmployeeId = 'employee-123';
+  final tStartDate = DateTime(2025, 5, 1);
+  final tEndDate = DateTime(2025, 5, 2);
+  
+  final tAttendanceRecordModel = AttendanceRecordModel(
+    id: 'record-123',
+    employeeId: tEmployeeId,
+    timestamp: DateTime(2025, 5, 1, 9, 0),
+    type: 'checkIn',
+    status: 'onTime',
+  );
+  
+  final tAttendanceRecord = tAttendanceRecordModel.toDomain();
+  final tAttendanceRecordModels = [tAttendanceRecordModel];
+  final tAttendanceRecords = [tAttendanceRecord];
+
+  group('getAttendanceRecords', () {
+    test('should check if device is online', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      when(mockLocalDataSource.getAttendanceRecords(any, any, any))
+          .thenAnswer((_) async => tAttendanceRecordModels);
+      when(mockRemoteDataSource.getAttendanceRecords(any, any, any))
+          .thenAnswer((_) async => tAttendanceRecordModels);
+      
+      // Act
+      await repository.getAttendanceRecords(tEmployeeId, tStartDate, tEndDate);
+      
+      // Assert
+      verify(mockNetworkInfo.isConnected);
+    });
+
+    group('device is online', () {
+      setUp(() {
+        when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      });
+
+      test('should return remote data when call to remote source is successful',
+          () async {
+        // Arrange
+        when(mockLocalDataSource.getAttendanceRecords(any, any, any))
+            .thenAnswer((_) async => tAttendanceRecordModels);
+        when(mockRemoteDataSource.getAttendanceRecords(any, any, any))
+            .thenAnswer((_) async => tAttendanceRecordModels);
+        
+        // Act
+        final result = await repository.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        );
+        
+        // Assert
+        verify(mockRemoteDataSource.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        ));
+        expect(result, equals(Right(tAttendanceRecords)));
+      });
+
+      test(
+          'should cache remote data locally when call to remote source is successful',
+          () async {
+        // Arrange
+        when(mockLocalDataSource.getAttendanceRecords(any, any, any))
+            .thenAnswer((_) async => tAttendanceRecordModels);
+        when(mockRemoteDataSource.getAttendanceRecords(any, any, any))
+            .thenAnswer((_) async => tAttendanceRecordModels);
+        
+        // Act
+        await repository.getAttendanceRecords(tEmployeeId, tStartDate, tEndDate);
+        
+        // Assert
+        verify(mockRemoteDataSource.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        ));
+        verify(mockLocalDataSource.saveAttendanceRecords(tAttendanceRecordModels));
+      });
+
+      test(
+          'should return local data when call to remote source fails',
+          () async {
+        // Arrange
+        when(mockLocalDataSource.getAttendanceRecords(any, any, any))
+            .thenAnswer((_) async => tAttendanceRecordModels);
+        when(mockRemoteDataSource.getAttendanceRecords(any, any, any))
+            .thenThrow(ServerException('Server error'));
+        
+        // Act
+        final result = await repository.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        );
+        
+        // Assert
+        verify(mockLocalDataSource.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        ));
+        expect(result, equals(Right(tAttendanceRecords)));
+      });
+    });
+
+    group('device is offline', () {
+      setUp(() {
+        when(mockNetworkInfo.isConnected).thenAnswer((_) async => false);
+      });
+
+      test(
+          'should return local data when device is offline',
+          () async {
+        // Arrange
+        when(mockLocalDataSource.getAttendanceRecords(any, any, any))
+            .thenAnswer((_) async => tAttendanceRecordModels);
+        
+        // Act
+        final result = await repository.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        );
+        
+        // Assert
+        verify(mockLocalDataSource.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        ));
+        verifyZeroInteractions(mockRemoteDataSource);
+        expect(result, equals(Right(tAttendanceRecords)));
+      });
+
+      test(
+          'should return CacheFailure when no local data is present',
+          () async {
+        // Arrange
+        when(mockLocalDataSource.getAttendanceRecords(any, any, any))
+            .thenThrow(CacheException('No data in cache'));
+        
+        // Act
+        final result = await repository.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        );
+        
+        // Assert
+        verify(mockLocalDataSource.getAttendanceRecords(
+          tEmployeeId,
+          tStartDate,
+          tEndDate,
+        ));
+        verifyZeroInteractions(mockRemoteDataSource);
+        expect(result, equals(Left(CacheFailure('No data in cache'))));
+      });
+    });
+  });
+}
+```
+
+## Presentation Layer Testing
+
+Presentation layer tests focus on UI components and state management:
+
+### Provider Testing
+
+```dart
+// File: test/features/attendance/presentation/providers/attendance_providers_test.dart
+import 'package:dartz/dartz.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:riverpod_test/riverpod_test.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/domain/usecases/get_attendance_records.dart';
+import 'package:hr_connect/features/attendance/domain/usecases/submit_attendance.dart';
+import 'package:hr_connect/features/attendance/presentation/providers/attendance_providers.dart';
+
+import 'attendance_providers_test.mocks.dart';
+
+@GenerateMocks([GetAttendanceRecords, SubmitAttendance])
+void main() {
+  late MockGetAttendanceRecords mockGetAttendanceRecords;
+  late MockSubmitAttendance mockSubmitAttendance;
+
+  setUp(() {
+    mockGetAttendanceRecords = MockGetAttendanceRecords();
+    mockSubmitAttendance = MockSubmitAttendance();
+  });
+
+  final tEmployeeId = 'employee-123';
+  final tAttendanceRecord = AttendanceRecord(
+    id: 'record-123',
+    employeeId: tEmployeeId,
+    timestamp: DateTime.now(),
+    type: AttendanceType.checkIn,
+    status: AttendanceStatus.onTime,
+  );
+  final tAttendanceRecords = [tAttendanceRecord];
+
+  group('userAttendanceProvider', () {
+    testProvider(
+      'should emit loading state and then data state when successful',
+      provider: userAttendanceProvider(tEmployeeId),
+      setUp: () {
+        when(mockGetAttendanceRecords.call(
+          employeeId: anyNamed('employeeId'),
+          startDate: anyNamed('startDate'),
+          endDate: anyNamed('endDate'),
+        )).thenAnswer((_) async => Right(tAttendanceRecords));
+      },
+      overrides: [
+        getAttendanceRecordsProvider.overrideWithValue(mockGetAttendanceRecords),
+      ],
+      expect: () => [
+        isA<AsyncLoading<List<AttendanceRecord>>>(),
+        isA<AsyncData<List<AttendanceRecord>>>().having(
+          (data) => data.value,
+          'attendance records',
+          tAttendanceRecords,
+        ),
+      ],
+    );
+
+    testProvider(
+      'should emit loading state and then error state when unsuccessful',
+      provider: userAttendanceProvider(tEmployeeId),
+      setUp: () {
+        when(mockGetAttendanceRecords.call(
+          employeeId: anyNamed('employeeId'),
+          startDate: anyNamed('startDate'),
+          endDate: anyNamed('endDate'),
+        )).thenAnswer((_) async => Left(ServerFailure('Server error')));
+      },
+      overrides: [
+        getAttendanceRecordsProvider.overrideWithValue(mockGetAttendanceRecords),
+      ],
+      expect: () => [
+        isA<AsyncLoading<List<AttendanceRecord>>>(),
+        isA<AsyncError<List<AttendanceRecord>>>(),
+      ],
+    );
+  });
+
+  group('AttendanceController', () {
+    testNotifier(
+      'should emit loading state and then data state when submitAttendance is successful',
+      notifier: attendanceControllerProvider,
+      setUp: () {
+        when(mockSubmitAttendance.call(
+          employeeId: anyNamed('employeeId'),
+          branchId: anyNamed('branchId'),
+          type: anyNamed('type'),
+          qrNonce: anyNamed('qrNonce'),
+          deviceId: anyNamed('deviceId'),
+          location: anyNamed('location'),
+        )).thenAnswer((_) async => Right(tAttendanceRecord));
+      },
+      overrides: [
+        submitAttendanceProvider.overrideWithValue(mockSubmitAttendance),
+      ],
+      actions: (notifier) async {
+        await notifier.submitAttendance(
+          employeeId: tEmployeeId,
+          branchId: 'branch-456',
+          type: AttendanceType.checkIn,
+          qrNonce: 'qr-789',
+        );
+      },
+      expect: () => [
+        isA<AsyncLoading<void>>(),
+        isA<AsyncData<AttendanceRecord>>().having(
+          (data) => data.value,
+          'attendance record',
+          tAttendanceRecord,
+        ),
+      ],
+    );
+  });
+}
+```
+
+### Widget Testing
+
+```dart
+// File: test/features/attendance/presentation/widgets/attendance_summary_card_test.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/presentation/widgets/attendance_summary_card.dart';
+
+void main() {
+  group('AttendanceSummaryCard', () {
+    final tAttendanceRecords = [
+      AttendanceRecord(
+        id: '1',
+        employeeId: 'employee-123',
+        timestamp: DateTime(2025, 5, 1, 9, 0),
+        type: AttendanceType.checkIn,
+        status: AttendanceStatus.onTime,
+      ),
+      AttendanceRecord(
+        id: '2',
+        employeeId: 'employee-123',
+        timestamp: DateTime(2025, 5, 1, 17, 0),
+        type: AttendanceType.checkOut,
+        status: AttendanceStatus.onTime,
+      ),
+    ];
+
+    testWidgets('should display check-in and check-out times',
+        (WidgetTester tester) async {
+      // Arrange
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AttendanceSummaryCard(records: tAttendanceRecords),
+          ),
+        ),
+      );
+
+      // Assert
+      expect(find.text('Check-in: 9:00 AM'), findsOneWidget);
+      expect(find.text('Check-out: 5:00 PM'), findsOneWidget);
+    });
+
+    testWidgets('should display attendance status indicators',
+        (WidgetTester tester) async {
+      // Arrange
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AttendanceSummaryCard(records: tAttendanceRecords),
+          ),
+        ),
+      );
+
+      // Assert
+      expect(find.byIcon(Icons.check_circle), findsNWidgets(2)); // On time indicators
+    });
+
+    testWidgets('should display late status indicator for late check-in',
+        (WidgetTester tester) async {
+      // Arrange
+      final lateRecords = [
+        AttendanceRecord(
+          id: '1',
+          employeeId: 'employee-123',
+          timestamp: DateTime(2025, 5, 1, 9, 30), // 30 minutes late
+          type: AttendanceType.checkIn,
+          status: AttendanceStatus.late,
+        ),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AttendanceSummaryCard(records: lateRecords),
+          ),
+        ),
+      );
+
+      // Assert
+      expect(find.byIcon(Icons.warning), findsOneWidget); // Late indicator
+    });
+  });
+}
+```
+
+## Integration Testing
+
+Integration tests verify complete feature slices end-to-end:
+
+```dart
+// File: integration_test/features/attendance/attendance_flow_test.dart
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hr_connect/app.dart';
+import 'package:hr_connect/features/attendance/domain/entities/attendance_record.dart';
+import 'package:hr_connect/features/attendance/presentation/screens/attendance_scanner_screen.dart';
+import 'package:hr_connect/features/attendance/presentation/screens/attendance_summary_screen.dart';
+import 'package:integration_test/integration_test.dart';
+import 'package:patrol/patrol.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+
+void main() {
+  IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+  
+  late PatrolTester $;
+
+  setUp(() {
+    $ = PatrolTester(
+      config: const PatrolTesterConfig(
+        useTextEntryEmulation: true,
+      ),
+    );
+    
+    // Set up mock data
+    SharedPreferences.setMockInitialValues({
+      'auth_token': 'test-token',
+      'user_id': 'employee-123',
+    });
+  });
+
+  group('Attendance Feature Flow', () {
+    patrolTest(
+      'should allow user to scan QR code and record attendance',
+      ($) async {
+        // Arrange - Start app and navigate to scanner
+        await $.pumpWidgetAndSettle(const HrConnectApp());
+        
+        // Mock user already logged in
+        await $.tap(find.text('Attendance'));
+        await $.pumpAndSettle();
+        
+        // Navigate to scanner screen
+        await $.tap(find.text('Scan QR Code'));
+        await $.pumpAndSettle();
+        
+        // Verify scanner screen is shown
+        expect($.widget<AttendanceScannerScreen>, findsOneWidget);
+        
+        // Mock QR code scanning
+        await $.native.mockBarcode(
+          'https://hrconnect.example.com/qr?b=branch1&t=1714556400&n=abc123&s=signature',
+        );
+        await $.pumpAndSettle();
+        
+        // Verify success dialog appears
+        expect(find.text('Check-In Successful'), findsOneWidget);
+        await $.tap(find.text('OK'));
+        await $.pumpAndSettle();
+        
+        // Verify redirected to summary screen with updated data
+        expect($.widget<AttendanceSummaryScreen>, findsOneWidget);
+        expect(find.text('Today\'s Attendance'), findsOneWidget);
+        expect(find.text('Check-in:'), findsOneWidget);
+        
+        // Verify attendance status is shown
+        expect(find.byIcon(Icons.check_circle), findsOneWidget); // On time indicator
+      },
+    );
+  });
+}
+```
+
+## Testing Specialized Features
+
+### Offline Behavior Testing
+
+```dart
+// File: test/core/network/network_aware_repository_test.dart
+import 'package:dartz/dartz.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:mockito/annotations.dart';
+import 'package:mockito/mockito.dart';
+import 'package:hr_connect/core/error/exceptions.dart';
+import 'package:hr_connect/core/error/failures.dart';
+import 'package:hr_connect/core/network/network_info.dart';
+import 'package:hr_connect/features/common/data/repositories/network_aware_repository.dart';
+
+import 'network_aware_repository_test.mocks.dart';
+
+class TestNetworkAwareRepository extends NetworkAwareRepository {
+  TestNetworkAwareRepository(NetworkInfo networkInfo) : super(networkInfo);
+}
+
+@GenerateMocks([NetworkInfo])
+void main() {
+  late TestNetworkAwareRepository repository;
+  late MockNetworkInfo mockNetworkInfo;
+
+  setUp(() {
+    mockNetworkInfo = MockNetworkInfo();
+    repository = TestNetworkAwareRepository(mockNetworkInfo);
+  });
+
+  group('performNetworkOperation', () {
+    test('should return remote data when device is online', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      
+      // Act
+      final result = await repository.performNetworkOperation<String>(
+        remoteOperation: () async => 'remote data',
+        localOperation: () async => 'local data',
+      );
+      
+      // Assert
+      verify(mockNetworkInfo.isConnected);
+      expect(result, equals(Right('remote data')));
+    });
+
+    test('should return local data when device is offline', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => false);
+      
+      // Act
+      final result = await repository.performNetworkOperation<String>(
+        remoteOperation: () async => 'remote data',
+        localOperation: () async => 'local data',
+      );
+      
+      // Assert
+      verify(mockNetworkInfo.isConnected);
+      expect(result, equals(Right('local data')));
+    });
+
+    test('should return local data when remote operation fails', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      
+      // Act
+      final result = await repository.performNetworkOperation<String>(
+        remoteOperation: () async => throw ServerException('Server error'),
+        localOperation: () async => 'local data',
+      );
+      
+      // Assert
+      verify(mockNetworkInfo.isConnected);
+      expect(result, equals(Right('local data')));
+    });
+
+    test('should return failure when both operations fail', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      
+      // Act
+      final result = await repository.performNetworkOperation<String>(
+        remoteOperation: () async => throw ServerException('Server error'),
+        localOperation: () async => throw CacheException('Cache error'),
+      );
+      
+      // Assert
+      verify(mockNetworkInfo.isConnected);
+      expect(result, equals(Left(CacheFailure('Cache error'))));
+    });
+  });
+}
+```
+
+### QR Code Testing
+
+```dart
+// File: test/features/attendance/domain/services/qr_validator_test.dart
+import 'package:flutter_test/flutter_test.dart';
+import 'package:hr_connect/features/attendance/domain/services/qr_validator.dart';
+
+void main() {
+  late QrValidator validator;
+  
+  setUp(() {
+    validator = QrValidator(
+      secretKey: 'test-secret-key',
+      validityWindow: const Duration(minutes: 15),
+    );
+  });
+  
+  group('QrValidator', () {
+    test('should validate QR code within validity window', () {
+      // Arrange
+      final now = DateTime.now();
+      final qrData = QrData(
+        branchId: 'branch-1',
+        timestamp: now.subtract(const Duration(minutes: 5)),
+        nonce: 'test-nonce',
+        signature: 'valid-signature', // Assume this is valid
+      );
+      
+      // Mock signature validation to return true
+      validator.validateSignature = (_) => true;
+      
+      // Act
+      final result = validator.validateQrData(qrData, now);
+      
+      // Assert
+      expect(result.isValid, true);
+    });
+    
+    test('should reject QR code outside validity window', () {
+      // Arrange
+      final now = DateTime.now();
+      final qrData = QrData(
+        branchId: 'branch-1',
+        timestamp: now.subtract(const Duration(minutes: 20)), // 20 minutes old
+        nonce: 'test-nonce',
+        signature: 'valid-signature',
+      );
+      
+      // Mock signature validation to return true
+      validator.validateSignature = (_) => true;
+      
+      // Act
+      final result = validator.validateQrData(qrData, now);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, QrValidationErrorCode.expired);
+    });
+    
+    test('should reject QR code with invalid signature', () {
+      // Arrange
+      final now = DateTime.now();
+      final qrData = QrData(
+        branchId: 'branch-1',
+        timestamp: now.subtract(const Duration(minutes: 5)),
+        nonce: 'test-nonce',
+        signature: 'invalid-signature',
+      );
+      
+      // Mock signature validation to return false
+      validator.validateSignature = (_) => false;
+      
+      // Act
+      final result = validator.validateQrData(qrData, now);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, QrValidationErrorCode.invalidSignature);
+    });
+    
+    test('should reject QR code from future', () {
+      // Arrange
+      final now = DateTime.now();
+      final qrData = QrData(
+        branchId: 'branch-1',
+        timestamp: now.add(const Duration(minutes: 5)), // 5 minutes in future
+        nonce: 'test-nonce',
+        signature: 'valid-signature',
+      );
+      
+      // Mock signature validation to return true
+      validator.validateSignature = (_) => true;
+      
+      // Act
+      final result = validator.validateQrData(qrData, now);
+      
+      // Assert
+      expect(result.isValid, false);
+      expect(result.errorCode, QrValidationErrorCode.invalidTimestamp);
+    });
+  });
+}
+```
+
+## Business Rules for Testing
+
+### Test Coverage Requirements
+- Domain Layer: 90% code coverage minimum
+- Data Layer: 85% code coverage minimum
+- Presentation Layer: 75% code coverage minimum
+- Integration Tests: Cover all critical user flows
+
+### Testing Priority
+1. Domain Entities and Business Rules
+2. Use Cases and Repository Interfaces
+3. Repository Implementations with Offline Support
+4. UI Components and State Management
+5. End-to-End Feature Flows
+
+### Naming Conventions
+- Test files should mirror production files with `_test` suffix
+- Test groups should describe the component being tested
+- Test cases should describe the expected behavior clearly
+
+### TDD Process Enforcement
+- PR reviews must verify tests were written first
+- Commit history should show Red → Green → Refactor pattern
+- No production code changes without corresponding test changes
+
+## Implementation Approach
+
+The TDD workflow for implementing new features:
+
+1. **Define Requirements**
+   - Clearly identify the feature and expected behavior
+   - Document business rules and constraints
+   - Define success criteria and test scenarios
+
+2. **Domain Layer TDD**
+   - Start with tests for domain entities and value objects
+   - Verify business rules through entity behavior tests
+   - Implement and test use cases for the core functionality
+
+3. **Data Layer TDD**
+   - Write tests for repository implementations
+   - Ensure offline-first behavior with proper fallbacks
+   - Test synchronization and conflict resolution logic
+
+4. **Presentation Layer TDD**
+   - Create tests for state management (Riverpod providers)
+   - Build widget tests for UI components
+   - Test user interactions and state transitions
+
+5. **Integration Testing**
+   - Implement tests for complete feature workflows
+   - Verify interactions between layers
+   - Test offline capabilities and sync behavior
+
+## Common Testing Patterns
+
+### AAA Pattern (Arrange-Act-Assert)
+```dart
+test('should calculate total hours worked correctly', () {
+  // Arrange
+  final checkIn = DateTime(2025, 5, 1, 9, 0);
+  final checkOut = DateTime(2025, 5, 1, 17, 30);
+  
+  // Act
+  final hoursWorked = calculateHoursWorked(checkIn, checkOut);
+  
+  // Assert
+  expect(hoursWorked, 8.5); // 8 hours 30 minutes = 8.5 hours
+});
+```
+
+### Given-When-Then Pattern
+```dart
+test('Given a valid attendance QR code, When scanned, Then check-in is recorded', () {
+  // Given - A valid QR code
+  final qrCode = createValidQrCode();
+  
+  // When - Code is scanned and processed
+  final result = processQrCodeScan(qrCode);
+  
+  // Then - Check-in is recorded successfully
+  expect(result.isSuccess, true);
+  expect(result.attendanceType, AttendanceType.checkIn);
+});
+```
+
+### Test Doubles
+- **Mocks**: Objects with programmable behavior for testing interactions
+- **Stubs**: Objects with predefined responses for testing behavior
+- **Fakes**: Simplified implementations of production code for testing
+- **Dummies**: Placeholder objects to satisfy dependencies
+
+### Testing Edge Cases
+- Empty or null inputs
+- Boundary conditions
+- Error scenarios
+- Timeout and retry behavior
+- Offline transitions
+
+- Conflict scenarios

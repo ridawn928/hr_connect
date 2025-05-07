@@ -1,0 +1,1023 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces the security constraint of maximum 2 personal devices per employee in the HR Connect application
+globs: "**/device*.dart,**/auth*.dart,**/security/*.dart"
+alwaysApply: false
+@deviceLimitEnforcement
+---
+
+# Device Limitation Enforcement
+
+This rule provides guidance for implementing the security constraint that limits each employee to a maximum of 2 personal devices in the HR Connect application. It focuses on proper device registration, counting, verification, and revocation.
+
+## Core Principles
+
+1. Each employee is limited to a maximum of 2 registered personal devices
+2. Device registration must include device-specific unique identifiers
+3. Device verification must occur at login and periodically during use
+4. Device revocation must be supported for both user and admin-initiated actions
+5. Terminal devices (administered by HR Portal) are tracked separately from personal devices
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Device information
+  device_info_plus: ^9.0.2      # For collecting device fingerprints
+  unique_identifier: ^0.3.0     # For secure device identification
+  
+  # Storage
+  drift: ^2.26.1                # For local database storage
+  flutter_secure_storage: ^9.2.4  # For secure storage of device credentials
+  
+  # Cryptography & Security
+  encrypt: ^5.0.1               # For encryption of device identifiers
+  crypto: ^3.0.3                # For cryptographic operations
+  
+  # State management
+  riverpod: ^2.6.1              # For state management
+  flutter_riverpod: ^2.6.1      # Flutter integration for Riverpod
+```
+
+## Device Management Implementation
+
+### DeviceProfile Domain Model
+
+```dart
+/// Represents a registered device in the system
+class DeviceProfile {
+  final String id;
+  final String employeeId;
+  final String deviceId;
+  final String deviceName;
+  final DeviceType type;
+  final DateTime registeredAt;
+  final DateTime lastUsedAt;
+  final bool isActive;
+  final DeviceVerificationStatus verificationStatus;
+  
+  const DeviceProfile({
+    required this.id,
+    required this.employeeId,
+    required this.deviceId,
+    required this.deviceName,
+    required this.type,
+    required this.registeredAt,
+    required this.lastUsedAt,
+    required this.isActive,
+    required this.verificationStatus,
+  });
+  
+  /// Creates a copy of this device profile with updated fields
+  DeviceProfile copyWith({
+    String? id,
+    String? employeeId,
+    String? deviceId,
+    String? deviceName,
+    DeviceType? type,
+    DateTime? registeredAt,
+    DateTime? lastUsedAt,
+    bool? isActive,
+    DeviceVerificationStatus? verificationStatus,
+  }) {
+    return DeviceProfile(
+      id: id ?? this.id,
+      employeeId: employeeId ?? this.employeeId,
+      deviceId: deviceId ?? this.deviceId,
+      deviceName: deviceName ?? this.deviceName,
+      type: type ?? this.type,
+      registeredAt: registeredAt ?? this.registeredAt,
+      lastUsedAt: lastUsedAt ?? this.lastUsedAt,
+      isActive: isActive ?? this.isActive,
+      verificationStatus: verificationStatus ?? this.verificationStatus,
+    );
+  }
+}
+
+/// Types of devices in the system
+enum DeviceType {
+  personal,    // User's own device (limit: 2 per employee)
+  terminal,    // Office terminal device (registered by HR)
+  kiosk,       // Public kiosk device (limited functionality)
+}
+
+/// Verification status for a device
+enum DeviceVerificationStatus {
+  pending,     // Just registered, awaiting verification
+  verified,    // Successfully verified
+  suspicious,  // Verification with warnings
+  revoked,     // Device access revoked
+}
+```
+
+### Device Repository Interface
+
+```dart
+/// Repository for managing device profiles
+abstract class DeviceRepository {
+  /// Gets a specific device profile by ID
+  Future<DeviceProfile?> getDeviceProfileById(String deviceProfileId);
+  
+  /// Gets active device profiles for a specific employee
+  Future<List<DeviceProfile>> getActiveDeviceProfilesForEmployee(String employeeId);
+  
+  /// Gets a count of active personal devices for an employee
+  Future<int> getActivePersonalDeviceCount(String employeeId);
+  
+  /// Registers a new device for an employee
+  Future<Either<DeviceRegistrationFailure, DeviceProfile>> registerDevice({
+    required String employeeId, 
+    required String deviceId,
+    required String deviceName,
+    required DeviceType type,
+  });
+  
+  /// Verifies a device during authentication
+  Future<Either<DeviceVerificationFailure, DeviceProfile>> verifyDevice(String deviceProfileId);
+  
+  /// Updates last used time for a device
+  Future<void> updateDeviceLastUsed(String deviceProfileId);
+  
+  /// Revokes a device profile
+  Future<Either<DeviceRevocationFailure, Unit>> revokeDevice(String deviceProfileId);
+  
+  /// Gets the current device profile being used
+  Future<DeviceProfile?> getCurrentDeviceProfile();
+}
+```
+
+### Device Limitation Service
+
+```dart
+/// Service for enforcing device limitations and managing device registration
+class DeviceLimitationService {
+  final DeviceRepository _deviceRepository;
+  final DeviceIdentifierService _deviceIdentifier;
+  final AuthorizationService _authorizationService;
+  
+  static const int maxPersonalDevices = 2;
+  
+  DeviceLimitationService(
+    this._deviceRepository,
+    this._deviceIdentifier,
+    this._authorizationService,
+  );
+  
+  /// Checks if an employee can register a new personal device
+  Future<Either<DeviceLimitExceededFailure, Unit>> canRegisterPersonalDevice(
+    String employeeId,
+  ) async {
+    // Check for HR Portal role that can override the limit
+    final hasHrPortalPermission = await _authorizationService.hasPermission(
+      Permissions.registerTerminalDevices,
+    );
+    
+    // HR Portal users can register terminal devices without counting against limit
+    if (hasHrPortalPermission) {
+      return const Right(unit);
+    }
+    
+    // For personal devices, check the count
+    final count = await _deviceRepository.getActivePersonalDeviceCount(employeeId);
+    
+    if (count >= maxPersonalDevices) {
+      return Left(DeviceLimitExceededFailure(
+        message: 'Maximum number of devices ($maxPersonalDevices) already registered',
+        currentCount: count,
+        maxDevices: maxPersonalDevices,
+      ));
+    }
+    
+    return const Right(unit);
+  }
+  
+  /// Registers the current device for an employee
+  Future<Either<DeviceRegistrationFailure, DeviceProfile>> registerCurrentDevice({
+    required String employeeId,
+    required DeviceType type,
+  }) async {
+    // Get the current device information
+    final deviceInfo = await _deviceIdentifier.getDeviceInfo();
+    final deviceId = await _deviceIdentifier.getUniqueDeviceId();
+    
+    // For personal devices, check if limit is reached
+    if (type == DeviceType.personal) {
+      final canRegister = await canRegisterPersonalDevice(employeeId);
+      
+      if (canRegister.isLeft()) {
+        return Left(DeviceRegistrationFailure.limitExceeded(
+          message: 'Device limit exceeded',
+        ));
+      }
+    }
+    
+    // Check if device is already registered for this employee
+    final existingDevices = await _deviceRepository.getActiveDeviceProfilesForEmployee(
+      employeeId,
+    );
+    
+    for (final device in existingDevices) {
+      if (device.deviceId == deviceId) {
+        // Device already registered, return success with existing profile
+        return Right(device);
+      }
+    }
+    
+    // Register the new device
+    return _deviceRepository.registerDevice(
+      employeeId: employeeId,
+      deviceId: deviceId,
+      deviceName: deviceInfo.deviceName,
+      type: type,
+    );
+  }
+  
+  /// Revokes a device registration
+  Future<Either<DeviceRevocationFailure, Unit>> revokeDevice(
+    String deviceProfileId,
+  ) async {
+    // Check if the current user has permission to revoke the device
+    final deviceProfile = await _deviceRepository.getDeviceProfileById(deviceProfileId);
+    
+    if (deviceProfile == null) {
+      return Left(DeviceRevocationFailure.deviceNotFound(
+        message: 'Device profile not found',
+      ));
+    }
+    
+    final currentDeviceProfile = await _deviceRepository.getCurrentDeviceProfile();
+    final isCurrentDevice = currentDeviceProfile?.id == deviceProfileId;
+    
+    // Check if the user has permission to revoke this device
+    final hasPermission = await _canRevokeDevice(deviceProfile, isCurrentDevice);
+    
+    if (hasPermission.isLeft()) {
+      return Left(DeviceRevocationFailure.permissionDenied(
+        message: 'No permission to revoke this device',
+      ));
+    }
+    
+    // Perform the revocation
+    return _deviceRepository.revokeDevice(deviceProfileId);
+  }
+  
+  /// Checks if the current user can revoke a specific device
+  Future<Either<DeviceRevocationFailure, Unit>> _canRevokeDevice(
+    DeviceProfile deviceProfile,
+    bool isCurrentDevice,
+  ) async {
+    // Users can always revoke their own devices
+    if (isCurrentDevice) {
+      return const Right(unit);
+    }
+    
+    // Check for team management permission for branch managers
+    final hasTeamDevicePermission = await _authorizationService.hasPermission(
+      Permissions.deactivateTeamMemberDevices,
+    );
+    
+    // Check if the device belongs to a team member
+    if (hasTeamDevicePermission) {
+      final isTeamMember = await _authorizationService.isEmployeeInManagerTeam(
+        deviceProfile.employeeId,
+      );
+      
+      if (isTeamMember) {
+        return const Right(unit);
+      }
+    }
+    
+    // Check for HR Portal permission
+    final hasHrPortalPermission = await _authorizationService.hasPermission(
+      Permissions.registerTerminalDevices, // HR Portal permission
+    );
+    
+    if (hasHrPortalPermission) {
+      return const Right(unit);
+    }
+    
+    return Left(DeviceRevocationFailure.permissionDenied(
+      message: 'No permission to revoke this device',
+    ));
+  }
+  
+  /// Gets a list of devices for the current employee
+  Future<List<DeviceProfile>> getCurrentEmployeeDevices() async {
+    final authService = GetIt.instance<AuthenticationService>();
+    final currentUser = await authService.getCurrentUser();
+    
+    if (currentUser == null) {
+      return [];
+    }
+    
+    return _deviceRepository.getActiveDeviceProfilesForEmployee(
+      currentUser.id,
+    );
+  }
+}
+```
+
+### Device Identifier Service
+
+```dart
+/// Service for generating and managing unique device identifiers
+class DeviceIdentifierService {
+  final DeviceInfoPlugin _deviceInfo;
+  final FlutterSecureStorage _secureStorage;
+  
+  static const String _deviceIdKey = 'device_identifier';
+  
+  DeviceIdentifierService(this._deviceInfo, this._secureStorage);
+  
+  /// Gets information about the current device
+  Future<DeviceInformation> getDeviceInfo() async {
+    if (Platform.isAndroid) {
+      return _getAndroidDeviceInfo();
+    } else if (Platform.isIOS) {
+      return _getIosDeviceInfo();
+    } else {
+      // Fallback for web or desktop
+      return _getGenericDeviceInfo();
+    }
+  }
+  
+  /// Gets a unique identifier for the current device
+  Future<String> getUniqueDeviceId() async {
+    // Try to get existing device ID from secure storage
+    final existingId = await _secureStorage.read(key: _deviceIdKey);
+    
+    if (existingId != null && existingId.isNotEmpty) {
+      return existingId;
+    }
+    
+    // Generate a new device ID if none exists
+    final deviceInfo = await getDeviceInfo();
+    final uniqueId = await _generateUniqueId(deviceInfo);
+    
+    // Store the ID for future use
+    await _secureStorage.write(key: _deviceIdKey, value: uniqueId);
+    
+    return uniqueId;
+  }
+  
+  /// Generates a unique ID based on device characteristics
+  Future<String> _generateUniqueId(DeviceInformation info) async {
+    // Combine device characteristics to form a fingerprint
+    final fingerprint = '${info.deviceModel}|${info.osVersion}|${info.deviceName}|${DateTime.now().millisecondsSinceEpoch}';
+    
+    // Create a cryptographic hash of the fingerprint
+    final bytes = utf8.encode(fingerprint);
+    final digest = sha256.convert(bytes);
+    
+    // Return the hash as a hexadecimal string
+    return digest.toString();
+  }
+  
+  /// Gets device information on Android
+  Future<DeviceInformation> _getAndroidDeviceInfo() async {
+    final androidInfo = await _deviceInfo.androidInfo;
+    
+    return DeviceInformation(
+      deviceName: androidInfo.device,
+      deviceModel: androidInfo.model,
+      osVersion: androidInfo.version.release,
+      platform: 'Android',
+    );
+  }
+  
+  /// Gets device information on iOS
+  Future<DeviceInformation> _getIosDeviceInfo() async {
+    final iosInfo = await _deviceInfo.iosInfo;
+    
+    return DeviceInformation(
+      deviceName: iosInfo.name ?? 'iOS Device',
+      deviceModel: iosInfo.model ?? 'Unknown',
+      osVersion: iosInfo.systemVersion ?? 'Unknown',
+      platform: 'iOS',
+    );
+  }
+  
+  /// Gets generic device information
+  Future<DeviceInformation> _getGenericDeviceInfo() async {
+    return DeviceInformation(
+      deviceName: 'Unknown Device',
+      deviceModel: 'Generic',
+      osVersion: 'Unknown',
+      platform: 'Other',
+    );
+  }
+}
+
+/// Information about a device
+class DeviceInformation {
+  final String deviceName;
+  final String deviceModel;
+  final String osVersion;
+  final String platform;
+  
+  const DeviceInformation({
+    required this.deviceName,
+    required this.deviceModel,
+    required this.osVersion,
+    required this.platform,
+  });
+}
+```
+
+### Authentication Integration
+
+```dart
+/// Authentication service with device verification
+class AuthenticationService {
+  final AuthRepository _authRepository;
+  final DeviceRepository _deviceRepository;
+  final DeviceIdentifierService _deviceIdentifier;
+  
+  AuthenticationService(
+    this._authRepository,
+    this._deviceRepository,
+    this._deviceIdentifier,
+  );
+  
+  /// Attempts to log in a user with credentials
+  Future<Either<AuthFailure, User>> login({
+    required String username,
+    required String password,
+  }) async {
+    // First attempt to authenticate with credentials
+    final authResult = await _authRepository.authenticate(
+      username: username,
+      password: password,
+    );
+    
+    return authResult.fold(
+      (failure) => Left(failure),
+      (user) async {
+        // Check if this device is registered
+        final currentDeviceId = await _deviceIdentifier.getUniqueDeviceId();
+        final devices = await _deviceRepository.getActiveDeviceProfilesForEmployee(user.id);
+        
+        DeviceProfile? matchingDevice;
+        for (final device in devices) {
+          if (device.deviceId == currentDeviceId) {
+            matchingDevice = device;
+            break;
+          }
+        }
+        
+        // If device not registered and would exceed limit, fail
+        if (matchingDevice == null) {
+          final deviceCount = await _deviceRepository.getActivePersonalDeviceCount(user.id);
+          
+          if (deviceCount >= DeviceLimitationService.maxPersonalDevices) {
+            return Left(AuthFailure.deviceLimitExceeded(
+              message: 'Maximum number of devices already registered',
+            ));
+          }
+          
+          // Auto-register this device
+          final registrationResult = await _deviceRepository.registerDevice(
+            employeeId: user.id,
+            deviceId: currentDeviceId,
+            deviceName: (await _deviceIdentifier.getDeviceInfo()).deviceName,
+            type: DeviceType.personal,
+          );
+          
+          return registrationResult.fold(
+            (failure) => Left(AuthFailure.deviceRegistrationFailed(
+              message: 'Failed to register device',
+            )),
+            (_) => Right(user),
+          );
+        } else {
+          // Update the last used time for this device
+          await _deviceRepository.updateDeviceLastUsed(matchingDevice.id);
+          
+          // Verify the device is still valid
+          final verificationResult = await _deviceRepository.verifyDevice(matchingDevice.id);
+          
+          return verificationResult.fold(
+            (failure) => Left(AuthFailure.deviceVerificationFailed(
+              message: 'Device verification failed',
+            )),
+            (_) => Right(user),
+          );
+        }
+      },
+    );
+  }
+}
+```
+
+## UI Components
+
+### Device Management Screen
+
+```dart
+/// Screen for managing registered devices
+class DeviceManagementScreen extends ConsumerWidget {
+  const DeviceManagementScreen({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final devicesAsync = ref.watch(userDevicesProvider);
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Registered Devices'),
+      ),
+      body: devicesAsync.when(
+        loading: () => Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(
+          child: Text('Error loading devices: ${error.toString()}'),
+        ),
+        data: (devices) {
+          return Column(
+            children: [
+              _buildDeviceCounter(context, devices),
+              Expanded(
+                child: devices.isEmpty
+                    ? _buildEmptyState()
+                    : _buildDeviceList(context, ref, devices),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+  
+  Widget _buildDeviceCounter(BuildContext context, List<DeviceProfile> devices) {
+    final personalDevices = devices.where((d) => d.type == DeviceType.personal).length;
+    
+    return Container(
+      padding: EdgeInsets.all(16),
+      margin: EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceVariant,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.devices),
+          SizedBox(width: 16),
+          Text('Personal Devices: $personalDevices / ${DeviceLimitationService.maxPersonalDevices}'),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.devices_other, size: 64, color: Colors.grey),
+          SizedBox(height: 16),
+          Text('No registered devices'),
+          SizedBox(height: 8),
+          Text('This device will be registered automatically', 
+               style: TextStyle(color: Colors.grey)),
+        ],
+      ),
+    );
+  }
+  
+  Widget _buildDeviceList(
+    BuildContext context, 
+    WidgetRef ref, 
+    List<DeviceProfile> devices,
+  ) {
+    return ListView.builder(
+      itemCount: devices.length,
+      itemBuilder: (context, index) {
+        final device = devices[index];
+        final isCurrentDevice = true; // In real app, check if this is current device
+        
+        return DeviceListItem(
+          device: device,
+          isCurrentDevice: isCurrentDevice,
+          onRevoke: () => _revokeDevice(context, ref, device),
+        );
+      },
+    );
+  }
+  
+  Future<void> _revokeDevice(
+    BuildContext context, 
+    WidgetRef ref, 
+    DeviceProfile device,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Revoke Device'),
+        content: Text('Are you sure you want to revoke access for this device? ' +
+                      'You will need to re-register if you want to use it again.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: Text('Revoke'),
+          ),
+        ],
+      ),
+    );
+    
+    if (confirmed == true) {
+      final deviceService = ref.read(deviceLimitationServiceProvider);
+      final result = await deviceService.revokeDevice(device.id);
+      
+      result.fold(
+        (failure) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to revoke device: ${failure.message}')),
+          );
+        },
+        (_) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Device revoked successfully')),
+          );
+          // Refresh the device list
+          ref.refresh(userDevicesProvider);
+        },
+      );
+    }
+  }
+}
+
+/// Provider for the current user's devices
+final userDevicesProvider = FutureProvider<List<DeviceProfile>>((ref) async {
+  final deviceService = ref.watch(deviceLimitationServiceProvider);
+  return deviceService.getCurrentEmployeeDevices();
+});
+
+/// Provider for the device limitation service
+final deviceLimitationServiceProvider = Provider<DeviceLimitationService>((ref) {
+  final deviceRepository = ref.watch(deviceRepositoryProvider);
+  final deviceIdentifier = ref.watch(deviceIdentifierServiceProvider);
+  final authorizationService = ref.watch(authorizationServiceProvider);
+  
+  return DeviceLimitationService(
+    deviceRepository,
+    deviceIdentifier,
+    authorizationService,
+  );
+});
+```
+
+### Device List Item
+
+```dart
+/// List item for displaying a registered device
+class DeviceListItem extends StatelessWidget {
+  final DeviceProfile device;
+  final bool isCurrentDevice;
+  final VoidCallback onRevoke;
+  
+  const DeviceListItem({
+    Key? key,
+    required this.device,
+    required this.isCurrentDevice,
+    required this.onRevoke,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      child: Padding(
+        padding: EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                _buildDeviceIcon(),
+                SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        device.deviceName,
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      SizedBox(height: 4),
+                      Text(
+                        _getDeviceTypeString(),
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                if (isCurrentDevice)
+                  Chip(
+                    label: Text('Current'),
+                    backgroundColor: Colors.green.withOpacity(0.2),
+                    labelStyle: TextStyle(color: Colors.green.shade700),
+                  ),
+              ],
+            ),
+            SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Last used: ${_formatDateTime(device.lastUsedAt)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                ElevatedButton.icon(
+                  onPressed: onRevoke,
+                  icon: Icon(Icons.delete_outline, size: 18),
+                  label: Text('Revoke'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red.withOpacity(0.1),
+                    foregroundColor: Colors.red,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildDeviceIcon() {
+    switch (device.type) {
+      case DeviceType.personal:
+        return Icon(Icons.phone_android, size: 32);
+      case DeviceType.terminal:
+        return Icon(Icons.computer, size: 32);
+      case DeviceType.kiosk:
+        return Icon(Icons.tablet_android, size: 32);
+    }
+  }
+  
+  String _getDeviceTypeString() {
+    switch (device.type) {
+      case DeviceType.personal:
+        return 'Personal Device';
+      case DeviceType.terminal:
+        return 'Office Terminal';
+      case DeviceType.kiosk:
+        return 'Public Kiosk';
+    }
+  }
+  
+  String _formatDateTime(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+    
+    if (difference.inDays > 0) {
+      return '${difference.inDays} ${difference.inDays == 1 ? 'day' : 'days'} ago';
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours} ${difference.inHours == 1 ? 'hour' : 'hours'} ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes} ${difference.inMinutes == 1 ? 'minute' : 'minutes'} ago';
+    } else {
+      return 'Just now';
+    }
+  }
+}
+```
+
+## Business Rules for Device Limitation
+
+1. **Device Registration Limits**
+   - Each employee is limited to a maximum of 2 active personal devices
+   - Personal devices are counted separately from terminal devices
+   - Terminal devices can only be registered by users with HR Portal access
+   - Device count checks must happen before any new device registration
+
+2. **Device Registration Process**
+   - Device registration should happen automatically during login if device is new
+   - Registration must collect device information for identification
+   - Each device must have a unique identifier that persists across app reinstalls
+   - Registration must fail if it would exceed the device limit
+
+3. **Device Verification**
+   - Devices must be verified at each login attempt
+   - Verification should check if the device has been revoked
+   - Suspicious devices should trigger additional authentication
+   - Verification status must be tracked for audit purposes
+
+4. **Device Revocation**
+   - Users can revoke their own devices at any time
+   - Branch Managers can revoke devices of their team members
+   - HR Portal users can revoke any device
+   - Revocation must update device status immediately
+
+5. **Login Security**
+   - Login attempts from unregistered devices must check device limit
+   - Login must be denied if a new device would exceed the limit
+   - Device verification status must be checked before allowing login
+   - Last used time must be updated on successful login
+
+## Testing Approach
+
+```dart
+void main() {
+  group('Device Limitation Service', () {
+    late MockDeviceRepository mockDeviceRepository;
+    late MockDeviceIdentifierService mockDeviceIdentifier;
+    late MockAuthorizationService mockAuthService;
+    late DeviceLimitationService service;
+    
+    setUp(() {
+      mockDeviceRepository = MockDeviceRepository();
+      mockDeviceIdentifier = MockDeviceIdentifierService();
+      mockAuthService = MockAuthorizationService();
+      service = DeviceLimitationService(
+        mockDeviceRepository,
+        mockDeviceIdentifier,
+        mockAuthService,
+      );
+    });
+    
+    test('canRegisterPersonalDevice should return success when below limit', () async {
+      // Arrange
+      when(mockDeviceRepository.getActivePersonalDeviceCount('employee1'))
+          .thenAnswer((_) async => 1); // Only 1 device registered
+      
+      // Act
+      final result = await service.canRegisterPersonalDevice('employee1');
+      
+      // Assert
+      expect(result.isRight(), true);
+    });
+    
+    test('canRegisterPersonalDevice should fail when at limit', () async {
+      // Arrange
+      when(mockDeviceRepository.getActivePersonalDeviceCount('employee1'))
+          .thenAnswer((_) async => 2); // Already at max (2 devices)
+      
+      // Act
+      final result = await service.canRegisterPersonalDevice('employee1');
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<DeviceLimitExceededFailure>()),
+        (_) => fail('Expected Left, got Right'),
+      );
+    });
+    
+    test('registerCurrentDevice should succeed when device is new and below limit', () async {
+      // Arrange
+      const employeeId = 'employee1';
+      const deviceId = 'device123';
+      
+      when(mockDeviceIdentifier.getUniqueDeviceId())
+          .thenAnswer((_) async => deviceId);
+      when(mockDeviceIdentifier.getDeviceInfo())
+          .thenAnswer((_) async => DeviceInformation(
+            deviceName: 'Test Phone',
+            deviceModel: 'Test Model',
+            osVersion: '14.0',
+            platform: 'iOS',
+          ));
+      when(mockDeviceRepository.getActivePersonalDeviceCount(employeeId))
+          .thenAnswer((_) async => 1);
+      when(mockDeviceRepository.getActiveDeviceProfilesForEmployee(employeeId))
+          .thenAnswer((_) async => []);
+      
+      final expectedDevice = DeviceProfile(
+        id: 'new-device-id',
+        employeeId: employeeId,
+        deviceId: deviceId,
+        deviceName: 'Test Phone',
+        type: DeviceType.personal,
+        registeredAt: DateTime.now(),
+        lastUsedAt: DateTime.now(),
+        isActive: true,
+        verificationStatus: DeviceVerificationStatus.verified,
+      );
+      
+      when(mockDeviceRepository.registerDevice(
+        employeeId: employeeId,
+        deviceId: deviceId,
+        deviceName: 'Test Phone',
+        type: DeviceType.personal,
+      )).thenAnswer((_) async => Right(expectedDevice));
+      
+      // Act
+      final result = await service.registerCurrentDevice(
+        employeeId: employeeId,
+        type: DeviceType.personal,
+      );
+      
+      // Assert
+      expect(result.isRight(), true);
+      verify(mockDeviceRepository.registerDevice(
+        employeeId: employeeId,
+        deviceId: deviceId,
+        deviceName: 'Test Phone',
+        type: DeviceType.personal,
+      )).called(1);
+    });
+    
+    test('registerCurrentDevice should fail when at device limit', () async {
+      // Arrange
+      const employeeId = 'employee1';
+      const deviceId = 'new-device';
+      
+      when(mockDeviceIdentifier.getUniqueDeviceId())
+          .thenAnswer((_) async => deviceId);
+      when(mockDeviceIdentifier.getDeviceInfo())
+          .thenAnswer((_) async => DeviceInformation(
+            deviceName: 'Test Phone',
+            deviceModel: 'Test Model',
+            osVersion: '14.0',
+            platform: 'iOS',
+          ));
+      when(mockDeviceRepository.getActivePersonalDeviceCount(employeeId))
+          .thenAnswer((_) async => 2); // Already at max
+      when(mockDeviceRepository.getActiveDeviceProfilesForEmployee(employeeId))
+          .thenAnswer((_) async => [
+            // Two existing devices with different IDs
+            DeviceProfile(
+              id: 'device1',
+              employeeId: employeeId,
+              deviceId: 'existing-device-1',
+              deviceName: 'Phone 1',
+              type: DeviceType.personal,
+              registeredAt: DateTime.now(),
+              lastUsedAt: DateTime.now(),
+              isActive: true,
+              verificationStatus: DeviceVerificationStatus.verified,
+            ),
+            DeviceProfile(
+              id: 'device2',
+              employeeId: employeeId,
+              deviceId: 'existing-device-2',
+              deviceName: 'Phone 2',
+              type: DeviceType.personal,
+              registeredAt: DateTime.now(),
+              lastUsedAt: DateTime.now(),
+              isActive: true,
+              verificationStatus: DeviceVerificationStatus.verified,
+            ),
+          ]);
+      
+      // Act
+      final result = await service.registerCurrentDevice(
+        employeeId: employeeId,
+        type: DeviceType.personal,
+      );
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<DeviceRegistrationFailure>()),
+        (_) => fail('Expected Left, got Right'),
+      );
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Secure Device Identification**
+   - Use multiple device characteristics to create fingerprints
+   - Store device identifiers in secure storage
+   - Encrypt sensitive device information
+   - Implement fallback mechanisms for device identification
+
+2. **Error Handling and User Experience**
+   - Provide clear error messages when device limit is reached
+   - Offer easy management of registered devices
+   - Guide users through device revocation process
+   - Show which device is currently being used
+
+3. **Performance Considerations**
+   - Cache device verification results to minimize repetitive checks
+   - Batch device profile updates to reduce API calls
+   - Use local verification when possible to reduce network dependence
+   - Implement progressive loading for device management screens
+
+4. **Security Hardening**
+   - Protect device registration and verification APIs from tampering
+   - Implement rate limiting for device verification attempts
+   - Log suspicious device activities for security monitoring
+   - Consider using certificate pinning for secure API communication
+
+5. **Edge Cases**
+   - Handle app reinstalls gracefully using persisted device identifiers
+   - Manage device identifier changes during OS updates
+   - Support transferring device registrations when replacing a device
+
+   - Handle factory reset scenarios with sensible defaults

@@ -1,0 +1,1713 @@
+---
+description: 
+globs: **/notification_*.dart,**/background_*.dart,**/sync_*.dart,**/workmanager_*.dart,**/features/notifications/**/*.dart,**/features/background/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's Background Processing and Notifications
+globs: **/notification_*.dart,**/background_*.dart,**/sync_*.dart,**/workmanager_*.dart,**/features/notifications/**/*.dart,**/features/background/**/*.dart
+alwaysApply: false
+---
+
+# Background Processing and Notifications
+
+This rule provides implementation guidance for the Background Processing and Notifications feature of HR Connect - a Flutter-based workforce management solution that requires reliable background operations and timely notifications.
+
+## Feature Overview
+
+The Background Processing and Notifications feature enables:
+- Background synchronization with WorkManager
+- Notification system for alerts and updates
+- Device management with the DeviceProfile aggregate
+- Push notifications for important events
+- Battery-efficient background processing
+- Notification preferences management
+- Scheduled notifications for upcoming deadlines
+- Offline-aware notification delivery
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Background Processing
+  workmanager: ^0.5.2              # Background task scheduling 
+  background_fetch: ^1.2.1         # iOS background fetch support
+  
+  # Notifications
+  flutter_local_notifications: ^14.1.1  # Local notifications
+  firebase_messaging: ^14.6.5        # Firebase Cloud Messaging
+  awesome_notifications: ^0.7.4+1    # Advanced notification features
+  
+  # Connectivity & Device Info
+  connectivity_plus: ^5.0.2         # Network connectivity detection
+  device_info_plus: ^9.0.2          # Device information
+  
+  # State Management
+  riverpod: ^2.6.1                  # State management
+  flutter_riverpod: ^2.6.1          # Flutter integration for Riverpod
+  
+  # Storage
+  shared_preferences: ^2.2.1        # Simple key-value storage
+  drift: ^2.26.1                    # Local database
+```
+
+## Background Processing Implementation
+
+### WorkManager Configuration
+
+```dart
+/// Configuration for WorkManager background tasks
+class WorkManagerConfig {
+  // Task names
+  static const String syncTask = 'com.hrconnect.sync';
+  static const String notificationCheckTask = 'com.hrconnect.notification.check';
+  static const String cleanupTask = 'com.hrconnect.cleanup';
+  
+  // Constraints
+  static final Constraints defaultConstraints = Constraints(
+    networkType: NetworkType.connected,
+    batteryNotLow: true,
+  );
+  
+  static final Constraints criticalConstraints = Constraints(
+    networkType: NetworkType.connected,
+  );
+  
+  // Task frequencies
+  static const Duration syncFrequency = Duration(hours: 1);
+  static const Duration notificationCheckFrequency = Duration(hours: 3);
+  static const Duration cleanupFrequency = Duration(days: 1);
+  
+  /// Initialize WorkManager with task handlers
+  static Future<void> initialize() async {
+    await Workmanager().initialize(
+      callbackDispatcher,
+      isInDebugMode: false, // Set to true for development
+    );
+  }
+  
+  /// Schedule all recurring background tasks
+  static Future<void> scheduleAllTasks() async {
+    await scheduleSync();
+    await scheduleNotificationCheck();
+    await scheduleCleanup();
+  }
+  
+  /// Schedule sync task
+  static Future<void> scheduleSync() async {
+    await Workmanager().registerPeriodicTask(
+      syncTask,
+      syncTask,
+      frequency: syncFrequency,
+      constraints: defaultConstraints,
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+      backoffPolicy: BackoffPolicy.exponential,
+      initialDelay: const Duration(minutes: 5),
+    );
+  }
+  
+  /// Schedule notification check task
+  static Future<void> scheduleNotificationCheck() async {
+    await Workmanager().registerPeriodicTask(
+      notificationCheckTask,
+      notificationCheckTask,
+      frequency: notificationCheckFrequency,
+      constraints: defaultConstraints,
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+      backoffPolicy: BackoffPolicy.linear,
+    );
+  }
+  
+  /// Schedule cleanup task
+  static Future<void> scheduleCleanup() async {
+    await Workmanager().registerPeriodicTask(
+      cleanupTask,
+      cleanupTask,
+      frequency: cleanupFrequency,
+      constraints: defaultConstraints,
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+      backoffPolicy: BackoffPolicy.linear,
+      initialDelay: const Duration(hours: 6),
+    );
+  }
+  
+  /// Schedule one-time sync task
+  static Future<void> scheduleSyncOnce() async {
+    await Workmanager().registerOneOffTask(
+      '$syncTask-${DateTime.now().millisecondsSinceEpoch}',
+      syncTask,
+      constraints: criticalConstraints,
+      backoffPolicy: BackoffPolicy.linear,
+    );
+  }
+  
+  /// Cancel all tasks
+  static Future<void> cancelAllTasks() async {
+    await Workmanager().cancelAll();
+  }
+}
+```
+
+### Task Handler Implementation
+
+```dart
+/// Top-level function to handle background tasks
+void callbackDispatcher() {
+  Workmanager().executeTask((taskName, inputData) async {
+    // Initialize services needed for background execution
+    await initializeBackgroundServices();
+    
+    try {
+      switch (taskName) {
+        case WorkManagerConfig.syncTask:
+          await BackgroundTaskHandler.handleSyncTask();
+          break;
+        case WorkManagerConfig.notificationCheckTask:
+          await BackgroundTaskHandler.handleNotificationCheckTask();
+          break;
+        case WorkManagerConfig.cleanupTask:
+          await BackgroundTaskHandler.handleCleanupTask();
+          break;
+        default:
+          BackgroundLogger.log('Unknown task: $taskName');
+          return false;
+      }
+      
+      return true;
+    } catch (e, stackTrace) {
+      BackgroundLogger.log('Error executing task $taskName: $e\n$stackTrace');
+      return false;
+    }
+  });
+}
+
+/// Handler for background tasks
+class BackgroundTaskHandler {
+  /// Handle sync task
+  static Future<void> handleSyncTask() async {
+    final syncService = getBackgroundServiceInstance<SyncService>();
+    await syncService.processPendingOperations();
+  }
+  
+  /// Handle notification check task
+  static Future<void> handleNotificationCheckTask() async {
+    final notificationService = getBackgroundServiceInstance<NotificationService>();
+    await notificationService.checkAndDeliverPendingNotifications();
+  }
+  
+  /// Handle cleanup task
+  static Future<void> handleCleanupTask() async {
+    final syncService = getBackgroundServiceInstance<SyncService>();
+    await syncService.cleanupCompletedOperations(
+      DateTime.now().subtract(const Duration(days: 7)),
+    );
+    
+    final notificationService = getBackgroundServiceInstance<NotificationService>();
+    await notificationService.cleanupOldNotifications(
+      DateTime.now().subtract(const Duration(days: 30)),
+    );
+  }
+}
+
+/// Initialize services for background execution
+Future<void> initializeBackgroundServices() async {
+  // Initialize any services required for background operation
+  // This is a simplified version - actual implementation would set up
+  // database connections, repositories, etc.
+  
+  final database = await AppDatabase.openDatabase();
+  final secureStorage = SecureStorageService();
+  
+  // Initialize service locator for background tasks
+  final serviceLocator = BackgroundServiceLocator();
+  serviceLocator.registerSingleton<SyncService>(
+    SyncService(
+      database.syncDao,
+      ApiClient(),
+      secureStorage,
+    ),
+  );
+  
+  serviceLocator.registerSingleton<NotificationService>(
+    NotificationService(
+      database.notificationDao,
+      FlutterLocalNotificationsPlugin(),
+    ),
+  );
+}
+
+/// Get service instance for background tasks
+T getBackgroundServiceInstance<T>() {
+  return BackgroundServiceLocator.instance.get<T>();
+}
+
+/// Logger for background tasks
+class BackgroundLogger {
+  static void log(String message) {
+    // In a real implementation, this would write to a persistent log
+    // that could be uploaded when the app is next opened
+    print('[Background] $message');
+  }
+}
+```
+
+## Notification System Implementation
+
+### Notification Service
+
+```dart
+/// Service for managing notifications
+class NotificationService {
+  final NotificationDao _notificationDao;
+  final FlutterLocalNotificationsPlugin _localNotifications;
+  final FirebaseMessaging? _firebaseMessaging;
+  
+  // Notification channels
+  static const String attendanceChannel = 'attendance_channel';
+  static const String leaveRequestChannel = 'leave_request_channel';
+  static const String generalChannel = 'general_channel';
+  static const String criticalChannel = 'critical_channel';
+  
+  NotificationService(
+    this._notificationDao,
+    this._localNotifications,
+    [this._firebaseMessaging],
+  );
+  
+  /// Initialize notification services
+  Future<void> initialize() async {
+    // Initialize local notifications
+    const androidSettings = AndroidInitializationSettings('app_icon');
+    final iosSettings = DarwinInitializationSettings(
+      requestAlertPermission: true,
+      requestBadgePermission: true,
+      requestSoundPermission: true,
+      onDidReceiveLocalNotification: _onDidReceiveLocalNotification,
+    );
+    
+    final initSettings = InitializationSettings(
+      android: androidSettings,
+      iOS: iosSettings,
+    );
+    
+    await _localNotifications.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: _onNotificationResponse,
+    );
+    
+    // Set up notification channels
+    await _setupNotificationChannels();
+    
+    // Initialize Firebase Messaging if available
+    if (_firebaseMessaging != null) {
+      await _initializeFirebaseMessaging();
+    }
+  }
+  
+  /// Set up notification channels
+  Future<void> _setupNotificationChannels() async {
+    // Android notification channels
+    const attendanceChannelDetails = AndroidNotificationChannel(
+      attendanceChannel,
+      'Attendance Notifications',
+      description: 'Notifications related to attendance tracking',
+      importance: Importance.high,
+    );
+    
+    const leaveRequestChannelDetails = AndroidNotificationChannel(
+      leaveRequestChannel,
+      'Leave Request Notifications',
+      description: 'Notifications related to leave requests',
+      importance: Importance.high,
+    );
+    
+    const generalChannelDetails = AndroidNotificationChannel(
+      generalChannel,
+      'General Notifications',
+      description: 'General app notifications',
+      importance: Importance.defaultImportance,
+    );
+    
+    const criticalChannelDetails = AndroidNotificationChannel(
+      criticalChannel,
+      'Critical Notifications',
+      description: 'Important notifications requiring immediate attention',
+      importance: Importance.max,
+    );
+    
+    // Create the channels
+    final flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+    final androidPlugin = flutterLocalNotificationsPlugin.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+        
+    if (androidPlugin != null) {
+      await androidPlugin.createNotificationChannel(attendanceChannelDetails);
+      await androidPlugin.createNotificationChannel(leaveRequestChannelDetails);
+      await androidPlugin.createNotificationChannel(generalChannelDetails);
+      await androidPlugin.createNotificationChannel(criticalChannelDetails);
+    }
+  }
+  
+  /// Initialize Firebase Messaging
+  Future<void> _initializeFirebaseMessaging() async {
+    // Request permission
+    final settings = await _firebaseMessaging!.requestPermission(
+      alert: true,
+      badge: true,
+      sound: true,
+    );
+    
+    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
+      // Subscribe to topics
+      await _firebaseMessaging!.subscribeToTopic('all_users');
+      
+      // Get FCM token
+      final token = await _firebaseMessaging!.getToken();
+      if (token != null) {
+        await _updateFcmToken(token);
+      }
+      
+      // Listen for token refreshes
+      _firebaseMessaging!.onTokenRefresh.listen(_updateFcmToken);
+      
+      // Set up message handling
+      FirebaseMessaging.onMessage.listen(_handleForegroundMessage);
+      FirebaseMessaging.onBackgroundMessage(_handleBackgroundMessage);
+      FirebaseMessaging.onMessageOpenedApp.listen(_handleMessageOpenedApp);
+    }
+  }
+  
+  /// Send a local notification
+  Future<void> sendLocalNotification({
+    required String title,
+    required String body,
+    required NotificationType type,
+    NotificationPriority priority = NotificationPriority.defaultPriority,
+    String? payload,
+    DateTime? scheduledDate,
+  }) async {
+    // Get the appropriate channel for this notification type
+    final channelId = _getChannelForType(type);
+    
+    // Create notification details
+    final androidDetails = AndroidNotificationDetails(
+      channelId,
+      _getChannelNameForType(type),
+      priority: _getPriorityForEnum(priority),
+      importance: _getImportanceForEnum(priority),
+      channelShowBadge: true,
+    );
+    
+    final iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+    
+    final notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+    
+    // Generate unique ID
+    final notificationId = DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    
+    // Store notification in database
+    final notificationEntity = NotificationEntity(
+      id: notificationId.toString(),
+      title: title,
+      body: body,
+      type: type.toString(),
+      priority: priority.toString(),
+      payload: payload,
+      createdAt: DateTime.now(),
+      isRead: false,
+    );
+    
+    await _notificationDao.insertNotification(notificationEntity);
+    
+    // Send notification now or schedule it
+    if (scheduledDate != null) {
+      await _localNotifications.zonedSchedule(
+        notificationId,
+        title,
+        body,
+        TZDateTime.from(scheduledDate, local),
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        payload: payload,
+      );
+    } else {
+      await _localNotifications.show(
+        notificationId,
+        title,
+        body,
+        notificationDetails,
+        payload: payload,
+      );
+    }
+  }
+  
+  /// Check for and deliver pending notifications
+  Future<void> checkAndDeliverPendingNotifications() async {
+    final pendingNotifications = await _notificationDao.getPendingNotifications();
+    
+    for (final notification in pendingNotifications) {
+      // Check if notification should be delivered now
+      if (notification.scheduledFor != null && 
+          notification.scheduledFor!.isBefore(DateTime.now())) {
+        await sendLocalNotification(
+          title: notification.title,
+          body: notification.body,
+          type: NotificationType.values.firstWhere(
+            (t) => t.toString() == notification.type,
+            orElse: () => NotificationType.general,
+          ),
+          priority: NotificationPriority.values.firstWhere(
+            (p) => p.toString() == notification.priority,
+            orElse: () => NotificationPriority.defaultPriority,
+          ),
+          payload: notification.payload,
+        );
+        
+        // Mark as processed
+        await _notificationDao.markNotificationProcessed(notification.id);
+      }
+    }
+  }
+  
+  /// Clean up old notifications
+  Future<void> cleanupOldNotifications(DateTime olderThan) async {
+    await _notificationDao.deleteOldNotifications(olderThan);
+  }
+  
+  /// Get all notifications for the current user
+  Future<List<UserNotification>> getUserNotifications({
+    int? limit,
+    int? offset,
+    bool includeRead = false,
+  }) async {
+    final entities = await _notificationDao.getUserNotifications(
+      limit: limit,
+      offset: offset,
+      includeRead: includeRead,
+    );
+    
+    return entities.map(_mapEntityToNotification).toList();
+  }
+  
+  /// Mark notification as read
+  Future<void> markAsRead(String notificationId) async {
+    await _notificationDao.markNotificationRead(notificationId);
+  }
+  
+  /// Get notification channel for type
+  String _getChannelForType(NotificationType type) {
+    switch (type) {
+      case NotificationType.attendance:
+        return attendanceChannel;
+      case NotificationType.leaveRequest:
+        return leaveRequestChannel;
+      case NotificationType.critical:
+        return criticalChannel;
+      case NotificationType.general:
+      default:
+        return generalChannel;
+    }
+  }
+  
+  /// Get channel name for type
+  String _getChannelNameForType(NotificationType type) {
+    switch (type) {
+      case NotificationType.attendance:
+        return 'Attendance Notifications';
+      case NotificationType.leaveRequest:
+        return 'Leave Request Notifications';
+      case NotificationType.critical:
+        return 'Critical Notifications';
+      case NotificationType.general:
+      default:
+        return 'General Notifications';
+    }
+  }
+  
+  /// Map priority enum to Android priority
+  Priority _getPriorityForEnum(NotificationPriority priority) {
+    switch (priority) {
+      case NotificationPriority.high:
+        return Priority.high;
+      case NotificationPriority.max:
+        return Priority.max;
+      case NotificationPriority.low:
+        return Priority.low;
+      case NotificationPriority.min:
+        return Priority.min;
+      case NotificationPriority.defaultPriority:
+      default:
+        return Priority.defaultPriority;
+    }
+  }
+  
+  /// Map priority enum to Android importance
+  Importance _getImportanceForEnum(NotificationPriority priority) {
+    switch (priority) {
+      case NotificationPriority.high:
+        return Importance.high;
+      case NotificationPriority.max:
+        return Importance.max;
+      case NotificationPriority.low:
+        return Importance.low;
+      case NotificationPriority.min:
+        return Importance.min;
+      case NotificationPriority.defaultPriority:
+      default:
+        return Importance.defaultImportance;
+    }
+  }
+  
+  /// Map database entity to domain model
+  UserNotification _mapEntityToNotification(NotificationEntity entity) {
+    return UserNotification(
+      id: entity.id,
+      title: entity.title,
+      body: entity.body,
+      type: NotificationType.values.firstWhere(
+        (t) => t.toString() == entity.type,
+        orElse: () => NotificationType.general,
+      ),
+      priority: NotificationPriority.values.firstWhere(
+        (p) => p.toString() == entity.priority,
+        orElse: () => NotificationPriority.defaultPriority,
+      ),
+      payload: entity.payload,
+      createdAt: entity.createdAt,
+      isRead: entity.isRead,
+    );
+  }
+  
+  /// Update FCM token
+  Future<void> _updateFcmToken(String token) async {
+    // Update token in your backend
+    // This would typically call an API to register the device token
+  }
+  
+  // Notification callback handlers
+  void _onDidReceiveLocalNotification(int id, String? title, String? body, String? payload) {
+    // Handle iOS notification when app is in foreground (iOS <10)
+  }
+  
+  void _onNotificationResponse(NotificationResponse response) {
+    // Handle notification tap
+    if (response.payload != null) {
+      // Navigate based on payload
+    }
+    
+    // Mark notification as read
+    markAsRead(response.id.toString());
+  }
+  
+  void _handleForegroundMessage(RemoteMessage message) {
+    // Handle FCM message when app is in foreground
+    if (message.notification != null) {
+      sendLocalNotification(
+        title: message.notification!.title ?? 'New Notification',
+        body: message.notification!.body ?? '',
+        type: _getNotificationTypeFromFcm(message),
+        priority: _getNotificationPriorityFromFcm(message),
+        payload: jsonEncode(message.data),
+      );
+    }
+  }
+  
+  void _handleMessageOpenedApp(RemoteMessage message) {
+    // Handle notification tap when app was in background
+    // This would typically navigate to the relevant screen
+  }
+  
+  // Helper methods for FCM
+  NotificationType _getNotificationTypeFromFcm(RemoteMessage message) {
+    final type = message.data['notificationType'] ?? 'general';
+    
+    switch (type) {
+      case 'attendance':
+        return NotificationType.attendance;
+      case 'leaveRequest':
+        return NotificationType.leaveRequest;
+      case 'critical':
+        return NotificationType.critical;
+      case 'general':
+      default:
+        return NotificationType.general;
+    }
+  }
+  
+  NotificationPriority _getNotificationPriorityFromFcm(RemoteMessage message) {
+    final priority = message.data['priority'] ?? 'default';
+    
+    switch (priority) {
+      case 'high':
+        return NotificationPriority.high;
+      case 'max':
+        return NotificationPriority.max;
+      case 'low':
+        return NotificationPriority.low;
+      case 'min':
+        return NotificationPriority.min;
+      case 'default':
+      default:
+        return NotificationPriority.defaultPriority;
+    }
+  }
+}
+
+// Top-level function to handle FCM messages when app is in background
+Future<void> _handleBackgroundMessage(RemoteMessage message) async {
+  // Initialize services needed for background processing
+  await initializeBackgroundServices();
+  
+  // Log message
+  BackgroundLogger.log('Received background message: ${message.messageId}');
+  
+  // Process message
+  final notificationService = getBackgroundServiceInstance<NotificationService>();
+  
+  if (message.notification != null) {
+    await notificationService.sendLocalNotification(
+      title: message.notification!.title ?? 'New Notification',
+      body: message.notification!.body ?? '',
+      type: NotificationType.general, // Simplified handling in background
+      priority: NotificationPriority.defaultPriority,
+      payload: jsonEncode(message.data),
+    );
+  }
+}
+```
+
+### Domain Models
+
+```dart
+/// Notification type categories
+enum NotificationType {
+  attendance,    // Attendance-related notifications
+  leaveRequest,  // Leave request notifications
+  general,       // General app notifications
+  critical,      // Critical notifications requiring immediate attention
+}
+
+/// Notification priority levels
+enum NotificationPriority {
+  min,             // Min importance, might not show in status bar
+  low,             // Low importance, no sound or vibration
+  defaultPriority, // Default importance
+  high,            // High importance, makes sound and appears as heads-up
+  max,             // Max importance, makes sound and appears as heads-up
+}
+
+/// User notification model
+class UserNotification {
+  final String id;
+  final String title;
+  final String body;
+  final NotificationType type;
+  final NotificationPriority priority;
+  final String? payload;
+  final DateTime createdAt;
+  final bool isRead;
+  
+  UserNotification({
+    required this.id,
+    required this.title,
+    required this.body,
+    required this.type,
+    required this.priority,
+    this.payload,
+    required this.createdAt,
+    required this.isRead,
+  });
+}
+
+/// Notification preferences for a user
+class NotificationPreferences {
+  final bool attendanceEnabled;
+  final bool leaveRequestEnabled;
+  final bool generalEnabled;
+  final bool pushEnabled;
+  final bool emailEnabled;
+  final List<String> mutedTopics;
+  final Map<String, NotificationPriority> topicPriorities;
+  
+  NotificationPreferences({
+    this.attendanceEnabled = true,
+    this.leaveRequestEnabled = true,
+    this.generalEnabled = true,
+    this.pushEnabled = true,
+    this.emailEnabled = true,
+    this.mutedTopics = const [],
+    this.topicPriorities = const {},
+  });
+  
+  NotificationPreferences copyWith({
+    bool? attendanceEnabled,
+    bool? leaveRequestEnabled,
+    bool? generalEnabled,
+    bool? pushEnabled,
+    bool? emailEnabled,
+    List<String>? mutedTopics,
+    Map<String, NotificationPriority>? topicPriorities,
+  }) {
+    return NotificationPreferences(
+      attendanceEnabled: attendanceEnabled ?? this.attendanceEnabled,
+      leaveRequestEnabled: leaveRequestEnabled ?? this.leaveRequestEnabled,
+      generalEnabled: generalEnabled ?? this.generalEnabled,
+      pushEnabled: pushEnabled ?? this.pushEnabled,
+      emailEnabled: emailEnabled ?? this.emailEnabled,
+      mutedTopics: mutedTopics ?? this.mutedTopics,
+      topicPriorities: topicPriorities ?? this.topicPriorities,
+    );
+  }
+}
+```
+
+## UI Implementation
+
+### Notification List Screen
+
+```dart
+class NotificationListScreen extends ConsumerStatefulWidget {
+  const NotificationListScreen({Key? key}) : super(key: key);
+  
+  @override
+  ConsumerState<NotificationListScreen> createState() => _NotificationListScreenState();
+}
+
+class _NotificationListScreenState extends ConsumerState<NotificationListScreen> {
+  bool _showReadNotifications = false;
+  
+  @override
+  Widget build(BuildContext context) {
+    final notificationsAsync = ref.watch(userNotificationsProvider(
+      includeRead: _showReadNotifications,
+    ));
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notifications'),
+        actions: [
+          IconButton(
+            icon: Icon(
+              _showReadNotifications ? Icons.visibility_off : Icons.visibility,
+            ),
+            onPressed: () {
+              setState(() {
+                _showReadNotifications = !_showReadNotifications;
+              });
+            },
+            tooltip: _showReadNotifications 
+                ? 'Hide read notifications' 
+                : 'Show read notifications',
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: () => _openNotificationSettings(context),
+            tooltip: 'Notification settings',
+          ),
+        ],
+      ),
+      body: notificationsAsync.when(
+        data: (notifications) {
+          if (notifications.isEmpty) {
+            return const Center(
+              child: Text('No notifications'),
+            );
+          }
+          
+          return ListView.builder(
+            itemCount: notifications.length,
+            itemBuilder: (context, index) {
+              final notification = notifications[index];
+              return NotificationItem(
+                notification: notification,
+                onTap: () => _handleNotificationTap(notification),
+              );
+            },
+          );
+        },
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(
+          child: Text('Error loading notifications: $error'),
+        ),
+      ),
+    );
+  }
+  
+  void _handleNotificationTap(UserNotification notification) {
+    // Mark as read
+    ref.read(notificationServiceProvider).markAsRead(notification.id);
+    
+    // Process payload if present
+    if (notification.payload != null) {
+      _processNotificationPayload(notification.payload!);
+    }
+  }
+  
+  void _processNotificationPayload(String payload) {
+    try {
+      final data = jsonDecode(payload);
+      
+      // Navigate based on payload type
+      switch (data['type']) {
+        case 'leaveRequest':
+          final requestId = data['requestId'];
+          if (requestId != null) {
+            Navigator.of(context).pushNamed(
+              '/leave-request-details',
+              arguments: {'requestId': requestId},
+            );
+          }
+          break;
+        case 'attendance':
+          Navigator.of(context).pushNamed('/attendance-history');
+          break;
+        // Handle other navigation cases
+        default:
+          // No specific action needed
+          break;
+      }
+    } catch (e) {
+      // Invalid payload format
+      print('Error processing notification payload: $e');
+    }
+  }
+  
+  void _openNotificationSettings(BuildContext context) {
+    Navigator.of(context).pushNamed('/notification-settings');
+  }
+}
+
+class NotificationItem extends StatelessWidget {
+  final UserNotification notification;
+  final VoidCallback onTap;
+  
+  const NotificationItem({
+    Key? key,
+    required this.notification,
+    required this.onTap,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      elevation: notification.isRead ? 1 : 2,
+      color: notification.isRead 
+          ? Theme.of(context).cardColor 
+          : Theme.of(context).colorScheme.primaryContainer,
+      child: ListTile(
+        leading: _buildNotificationIcon(),
+        title: Text(
+          notification.title,
+          style: TextStyle(
+            fontWeight: notification.isRead ? FontWeight.normal : FontWeight.bold,
+          ),
+        ),
+        subtitle: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(notification.body),
+            const SizedBox(height: 4),
+            Text(
+              _formatNotificationDate(notification.createdAt),
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ],
+        ),
+        isThreeLine: true,
+        onTap: onTap,
+      ),
+    );
+  }
+  
+  Widget _buildNotificationIcon() {
+    IconData iconData;
+    Color iconColor;
+    
+    switch (notification.type) {
+      case NotificationType.attendance:
+        iconData = Icons.access_time;
+        iconColor = Colors.blue;
+        break;
+      case NotificationType.leaveRequest:
+        iconData = Icons.event_busy;
+        iconColor = Colors.orange;
+        break;
+      case NotificationType.critical:
+        iconData = Icons.priority_high;
+        iconColor = Colors.red;
+        break;
+      case NotificationType.general:
+      default:
+        iconData = Icons.notifications;
+        iconColor = Colors.grey;
+        break;
+    }
+    
+    return CircleAvatar(
+      backgroundColor: iconColor.withOpacity(0.2),
+      child: Icon(iconData, color: iconColor),
+    );
+  }
+  
+  String _formatNotificationDate(DateTime date) {
+    final now = DateTime.now();
+    final difference = now.difference(date);
+    
+    if (difference.inDays > 0) {
+      return DateFormat('MMM d, h:mm a').format(date);
+    } else if (difference.inHours > 0) {
+      return '${difference.inHours} ${difference.inHours == 1 ? 'hour' : 'hours'} ago';
+    } else if (difference.inMinutes > 0) {
+      return '${difference.inMinutes} ${difference.inMinutes == 1 ? 'minute' : 'minutes'} ago';
+    } else {
+      return 'Just now';
+    }
+  }
+}
+```
+
+### Notification Settings Screen
+
+```dart
+class NotificationSettingsScreen extends ConsumerWidget {
+  const NotificationSettingsScreen({Key? key}) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final preferencesAsync = ref.watch(notificationPreferencesProvider);
+    
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Notification Settings'),
+      ),
+      body: preferencesAsync.when(
+        data: (preferences) => _buildSettingsList(context, preferences, ref),
+        loading: () => const Center(child: CircularProgressIndicator()),
+        error: (error, stack) => Center(
+          child: Text('Error loading preferences: $error'),
+        ),
+      ),
+    );
+  }
+  
+  Widget _buildSettingsList(
+    BuildContext context, 
+    NotificationPreferences preferences,
+    WidgetRef ref,
+  ) {
+    return ListView(
+      children: [
+        const SectionHeader(title: 'Delivery Methods'),
+        SwitchListTile(
+          title: const Text('Push Notifications'),
+          subtitle: const Text('Receive notifications on this device'),
+          value: preferences.pushEnabled,
+          onChanged: (value) => _updatePreference(
+            ref,
+            preferences.copyWith(pushEnabled: value),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Email Notifications'),
+          subtitle: const Text('Receive notifications via email'),
+          value: preferences.emailEnabled,
+          onChanged: (value) => _updatePreference(
+            ref,
+            preferences.copyWith(emailEnabled: value),
+          ),
+        ),
+        const Divider(),
+        
+        const SectionHeader(title: 'Notification Categories'),
+        SwitchListTile(
+          title: const Text('Attendance Notifications'),
+          subtitle: const Text('Check-in reminders and attendance alerts'),
+          value: preferences.attendanceEnabled,
+          onChanged: (value) => _updatePreference(
+            ref,
+            preferences.copyWith(attendanceEnabled: value),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Leave Request Notifications'),
+          subtitle: const Text('Updates about leave requests and approvals'),
+          value: preferences.leaveRequestEnabled,
+          onChanged: (value) => _updatePreference(
+            ref,
+            preferences.copyWith(leaveRequestEnabled: value),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('General Notifications'),
+          subtitle: const Text('Announcements and general updates'),
+          value: preferences.generalEnabled,
+          onChanged: (value) => _updatePreference(
+            ref,
+            preferences.copyWith(generalEnabled: value),
+          ),
+        ),
+        const Divider(),
+        
+        if (preferences.mutedTopics.isNotEmpty) ...[
+          const SectionHeader(title: 'Muted Topics'),
+          ...preferences.mutedTopics.map((topic) => ListTile(
+            title: Text(topic),
+            trailing: IconButton(
+              icon: const Icon(Icons.volume_up),
+              onPressed: () {
+                final updatedTopics = List<String>.from(preferences.mutedTopics)
+                  ..remove(topic);
+                _updatePreference(
+                  ref,
+                  preferences.copyWith(mutedTopics: updatedTopics),
+                );
+              },
+              tooltip: 'Unmute',
+            ),
+          )),
+          const Divider(),
+        ],
+        
+        const SectionHeader(title: 'Advanced Settings'),
+        ListTile(
+          title: const Text('Topic Priorities'),
+          subtitle: const Text('Set importance levels for different topics'),
+          onTap: () => _openTopicPriorities(context, preferences, ref),
+        ),
+        ListTile(
+          title: const Text('Notification History'),
+          subtitle: const Text('View and manage past notifications'),
+          onTap: () => Navigator.of(context).pushNamed('/notification-history'),
+        ),
+        ListTile(
+          title: const Text('Reset to Defaults'),
+          subtitle: const Text('Restore default notification settings'),
+          onTap: () => _confirmResetDefaults(context, ref),
+        ),
+      ],
+    );
+  }
+  
+  void _updatePreference(
+    WidgetRef ref,
+    NotificationPreferences updatedPreferences,
+  ) {
+    ref.read(notificationPreferencesProvider.notifier).updatePreferences(
+      updatedPreferences,
+    );
+  }
+  
+  void _openTopicPriorities(
+    BuildContext context,
+    NotificationPreferences preferences,
+    WidgetRef ref,
+  ) {
+    // Implementation for topic priorities screen
+  }
+  
+  void _confirmResetDefaults(BuildContext context, WidgetRef ref) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Reset to Defaults'),
+        content: const Text(
+          'This will restore all notification settings to their default values. '
+          'Are you sure you want to continue?'
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              ref.read(notificationPreferencesProvider.notifier).resetToDefaults();
+            },
+            child: const Text('Reset'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class SectionHeader extends StatelessWidget {
+  final String title;
+  
+  const SectionHeader({
+    Key? key,
+    required this.title,
+  }) : super(key: key);
+  
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+      child: Text(
+        title,
+        style: Theme.of(context).textTheme.titleMedium?.copyWith(
+          color: Theme.of(context).colorScheme.primary,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+}
+```
+
+## Business Rules
+
+### 1. Battery Efficiency Rules
+
+- **Batch Processing**:
+  - Background operations should be batched to minimize wake cycles
+  - Sync operations grouped by priority to reduce processing time
+  - Use of exponential backoff for retries to reduce battery impact
+  - Maximum background processing time: 5 minutes per hour
+
+- **Battery Awareness**:
+  - Non-critical operations should be deferred when battery is low (<15%)
+  - Scheduling should avoid peak usage times (typically 9-5pm)
+  - Battery impact should be less than 5% per day
+  - Background tasks should respect device idle state
+
+- **Resource Optimization**:
+  - Background tasks should minimize memory usage
+  - Network requests should be compressed and optimized
+  - Database access should be efficient and batched
+  - Tasks should complete within allocated time limits
+
+### 2. Background Sync Prioritization
+
+- **Priority Levels**:
+  - Level 10 (Highest): Critical attendance records
+  - Level 8-9: Leave requests, approvals
+  - Level 5-7: Profile updates, document uploads
+  - Level 1-4: Preference updates, non-critical data
+
+- **Scheduling Rules**:
+  - Higher priority items scheduled more frequently
+  - Critical operations (priority 8-10) should sync at least hourly
+  - Medium priority (5-7) should sync every 3 hours
+  - Low priority (1-4) can be deferred up to 12 hours
+
+- **Connection Awareness**:
+  - Only sync on unmetered connections by default
+  - Offer user option to sync critical data on metered networks
+  - Detect connection quality and adjust payload size
+  - Implement resume capability for interrupted transfers
+
+### 3. Notification Delivery
+
+- **Delivery Priority**:
+  - Critical notifications must be delivered immediately
+  - Standard notifications may be batched to preserve battery
+  - Low-priority notifications can be deferred to reduce interruptions
+  - All notifications must respect user's quiet hours (if set)
+
+- **Offline Handling**:
+  - Notifications should be queued when offline
+  - Queued notifications delivered when connection is restored
+  - Duplicate notifications should be collapsed
+  - Time-sensitive notifications expire after relevance window
+
+- **User Preferences**:
+  - Users can mute specific notification categories
+  - Users can set priority levels for different categories
+  - Users can choose delivery methods (push, email, in-app)
+  - Users can set quiet hours for non-critical notifications
+
+### 4. WorkManager Task Constraints
+
+- **Task Definitions**:
+  - Sync task: Runs every hour, requires network, battery not low
+  - Notification check: Runs every 3 hours, requires network
+  - Cleanup task: Runs daily, no specific constraints
+
+- **Retry Logic**:
+  - Sync task: Exponential backoff, maximum 5 retries
+  - Notification task: Linear backoff, maximum 3 retries
+  - Cleanup task: Linear backoff, maximum 2 retries
+
+- **Task Coordination**:
+  - Tasks should avoid running simultaneously
+  - Critical tasks can preempt lower priority tasks
+  - Tasks should be idempotent (safe to run multiple times)
+  - Tasks should handle incomplete execution gracefully
+
+### 5. Platform-Specific Considerations
+
+- **Android Considerations**:
+  - Use notification channels for categorization
+  - Respect Doze mode and App Standby
+  - Implement foreground service for critical operations
+  - Support notification channel settings on Android 8+
+
+- **iOS Considerations**:
+  - Use background fetch appropriately
+  - Manage notification permissions properly
+  - Support notification categories on iOS
+  - Handle restricted background execution time
+
+## Repositories
+
+### Notification Repository
+
+```dart
+abstract class NotificationRepository {
+  /// Get all notifications for the current user
+  Future<Either<NotificationFailure, List<UserNotification>>> getUserNotifications({
+    int? limit,
+    int? offset,
+    bool includeRead = false,
+  });
+  
+  /// Get notification by ID
+  Future<Either<NotificationFailure, UserNotification>> getNotificationById(
+    String id,
+  );
+  
+  /// Mark notification as read
+  Future<Either<NotificationFailure, Unit>> markAsRead(String id);
+  
+  /// Get notification count
+  Future<Either<NotificationFailure, int>> getUnreadCount();
+  
+  /// Delete notification
+  Future<Either<NotificationFailure, Unit>> deleteNotification(String id);
+  
+  /// Get pending notifications to be delivered
+  Future<Either<NotificationFailure, List<PendingNotification>>> getPendingNotifications();
+  
+  /// Schedule notification for later delivery
+  Future<Either<NotificationFailure, Unit>> scheduleNotification(
+    PendingNotification notification,
+  );
+  
+  /// Clear all notifications
+  Future<Either<NotificationFailure, Unit>> clearAllNotifications();
+  
+  /// Get notification preferences
+  Future<Either<NotificationFailure, NotificationPreferences>> getPreferences();
+  
+  /// Update notification preferences
+  Future<Either<NotificationFailure, Unit>> updatePreferences(
+    NotificationPreferences preferences,
+  );
+}
+```
+
+### Background Task Repository
+
+```dart
+abstract class BackgroundTaskRepository {
+  /// Queue a task for background execution
+  Future<Either<BackgroundTaskFailure, Unit>> queueTask({
+    required String taskType,
+    required Map<String, dynamic> parameters,
+    required int priority,
+    DateTime? scheduleFor,
+  });
+  
+  /// Get tasks queued for execution
+  Future<Either<BackgroundTaskFailure, List<BackgroundTask>>> getQueuedTasks({
+    String? taskType,
+    int? minPriority,
+  });
+  
+  /// Mark task as completed
+  Future<Either<BackgroundTaskFailure, Unit>> markTaskCompleted(
+    String taskId,
+    Map<String, dynamic>? result,
+  );
+  
+  /// Mark task as failed
+  Future<Either<BackgroundTaskFailure, Unit>> markTaskFailed(
+    String taskId,
+    String error,
+  );
+  
+  /// Get task history
+  Future<Either<BackgroundTaskFailure, List<BackgroundTask>>> getTaskHistory({
+    String? taskType,
+    DateTimeRange? dateRange,
+    int? limit,
+    int? offset,
+  });
+  
+  /// Clear completed tasks
+  Future<Either<BackgroundTaskFailure, int>> clearCompletedTasks(
+    DateTime olderThan,
+  );
+}
+```
+
+## Testing Guidelines
+
+### 1. Testing Background Operations
+
+```dart
+void main() {
+  late MockSyncDao mockSyncDao;
+  late MockApiClient mockApiClient;
+  late MockSecureStorageService mockSecureStorage;
+  late SyncService syncService;
+  
+  setUp(() {
+    mockSyncDao = MockSyncDao();
+    mockApiClient = MockApiClient();
+    mockSecureStorage = MockSecureStorageService();
+    
+    syncService = SyncService(
+      mockSyncDao,
+      mockApiClient,
+      mockSecureStorage,
+    );
+  });
+  
+  group('SyncService', () {
+    test('should process pending operations when online', () async {
+      // Arrange
+      final operations = [
+        SyncOperation(
+          operationId: 'op-1',
+          entityType: 'employee',
+          entityId: 'emp-123',
+          operation: SyncOperationType.update,
+          data: {'name': 'John'},
+          priority: 5,
+          timestamp: DateTime.now(),
+          retryCount: 0,
+          status: SyncStatus.pending,
+        ),
+      ];
+      
+      when(() => mockSyncDao.getPendingOperationsSorted())
+          .thenAnswer((_) async => operations);
+      
+      when(() => mockSyncDao.updateOperationStatus(any(), any(), any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockApiClient.sendRequest(any(), method: any(named: 'method'), data: any(named: 'data')))
+          .thenAnswer((_) async => {'success': true});
+      
+      // Act
+      final result = await syncService.processPendingOperations();
+      
+      // Assert
+      expect(result.success, true);
+      expect(result.operationsProcessed, 1);
+      verify(() => mockSyncDao.updateOperationStatus('op-1', SyncStatus.completed, any())).called(1);
+    });
+    
+    test('should handle API errors and increment retry count', () async {
+      // Arrange
+      final operations = [
+        SyncOperation(
+          operationId: 'op-1',
+          entityType: 'employee',
+          entityId: 'emp-123',
+          operation: SyncOperationType.update,
+          data: {'name': 'John'},
+          priority: 5,
+          timestamp: DateTime.now(),
+          retryCount: 0,
+          status: SyncStatus.pending,
+        ),
+      ];
+      
+      when(() => mockSyncDao.getPendingOperationsSorted())
+          .thenAnswer((_) async => operations);
+      
+      when(() => mockSyncDao.updateOperationStatus(any(), any(), any(), errorMessage: any(named: 'errorMessage')))
+          .thenAnswer((_) async {});
+      
+      when(() => mockApiClient.sendRequest(any(), method: any(named: 'method'), data: any(named: 'data')))
+          .thenThrow(Exception('API error'));
+      
+      when(() => mockSyncDao.incrementRetryCount('op-1'))
+          .thenAnswer((_) async => operations.first.copyWith(retryCount: 1));
+      
+      // Act
+      final result = await syncService.processPendingOperations();
+      
+      // Assert
+      expect(result.success, false);
+      expect(result.operationsFailed, 1);
+      verify(() => mockSyncDao.incrementRetryCount('op-1')).called(1);
+    });
+    
+    test('should mark operation as failed after max retries', () async {
+      // Arrange
+      final operations = [
+        SyncOperation(
+          operationId: 'op-1',
+          entityType: 'employee',
+          entityId: 'emp-123',
+          operation: SyncOperationType.update,
+          data: {'name': 'John'},
+          priority: 5,
+          timestamp: DateTime.now(),
+          retryCount: 4, // Already at max retries - 1
+          status: SyncStatus.pending,
+        ),
+      ];
+      
+      when(() => mockSyncDao.getPendingOperationsSorted())
+          .thenAnswer((_) async => operations);
+      
+      when(() => mockSyncDao.updateOperationStatus(any(), any(), any(), errorMessage: any(named: 'errorMessage')))
+          .thenAnswer((_) async {});
+      
+      when(() => mockApiClient.sendRequest(any(), method: any(named: 'method'), data: any(named: 'data')))
+          .thenThrow(Exception('API error'));
+      
+      when(() => mockSyncDao.incrementRetryCount('op-1'))
+          .thenAnswer((_) async => operations.first.copyWith(retryCount: 5));
+      
+      // Act
+      final result = await syncService.processPendingOperations();
+      
+      // Assert
+      expect(result.success, false);
+      expect(result.operationsFailed, 1);
+      verify(() => mockSyncDao.updateOperationStatus(
+        'op-1', 
+        SyncStatus.failed, 
+        any(),
+        errorMessage: any(named: 'errorMessage'),
+      )).called(1);
+    });
+  });
+}
+```
+
+### 2. Testing Notifications
+
+```dart
+void main() {
+  late MockNotificationDao mockNotificationDao;
+  late MockFlutterLocalNotificationsPlugin mockLocalNotifications;
+  late NotificationService notificationService;
+  
+  setUp(() {
+    mockNotificationDao = MockNotificationDao();
+    mockLocalNotifications = MockFlutterLocalNotificationsPlugin();
+    
+    notificationService = NotificationService(
+      mockNotificationDao,
+      mockLocalNotifications,
+    );
+  });
+  
+  group('NotificationService', () {
+    test('should send local notification', () async {
+      // Arrange
+      const title = 'Test Title';
+      const body = 'Test Body';
+      const type = NotificationType.general;
+      
+      // Mock entity conversion
+      final notificationEntity = NotificationEntity(
+        id: any(named: 'id'),
+        title: title,
+        body: body,
+        type: type.toString(),
+        priority: NotificationPriority.defaultPriority.toString(),
+        createdAt: any(named: 'createdAt'),
+        isRead: false,
+      );
+      
+      when(() => mockNotificationDao.insertNotification(any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockLocalNotifications.show(
+        any(), any(), any(), any(), payload: any(named: 'payload'),
+      )).thenAnswer((_) async {});
+      
+      // Act
+      await notificationService.sendLocalNotification(
+        title: title,
+        body: body,
+        type: type,
+      );
+      
+      // Assert
+      verify(() => mockNotificationDao.insertNotification(any())).called(1);
+      verify(() => mockLocalNotifications.show(
+        any(), title, body, any(), payload: any(named: 'payload'),
+      )).called(1);
+    });
+    
+    test('should schedule notification for future delivery', () async {
+      // Arrange
+      const title = 'Test Title';
+      const body = 'Test Body';
+      const type = NotificationType.general;
+      final scheduledDate = DateTime.now().add(const Duration(hours: 1));
+      
+      when(() => mockNotificationDao.insertNotification(any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockLocalNotifications.zonedSchedule(
+        any(), any(), any(), any(), any(),
+        androidScheduleMode: any(named: 'androidScheduleMode'),
+        uiLocalNotificationDateInterpretation: any(named: 'uiLocalNotificationDateInterpretation'),
+        payload: any(named: 'payload'),
+      )).thenAnswer((_) async {});
+      
+      // Act
+      await notificationService.sendLocalNotification(
+        title: title,
+        body: body,
+        type: type,
+        scheduledDate: scheduledDate,
+      );
+      
+      // Assert
+      verify(() => mockNotificationDao.insertNotification(any())).called(1);
+      verify(() => mockLocalNotifications.zonedSchedule(
+        any(), title, body, any(), any(),
+        androidScheduleMode: any(named: 'androidScheduleMode'),
+        uiLocalNotificationDateInterpretation: any(named: 'uiLocalNotificationDateInterpretation'),
+        payload: any(named: 'payload'),
+      )).called(1);
+    });
+    
+    test('should mark notification as read', () async {
+      // Arrange
+      const notificationId = 'notif-123';
+      
+      when(() => mockNotificationDao.markNotificationRead(notificationId))
+          .thenAnswer((_) async {});
+      
+      // Act
+      await notificationService.markAsRead(notificationId);
+      
+      // Assert
+      verify(() => mockNotificationDao.markNotificationRead(notificationId)).called(1);
+    });
+    
+    test('should deliver pending notifications', () async {
+      // Arrange
+      final now = DateTime.now();
+      final pendingNotifications = [
+        PendingNotificationEntity(
+          id: 'pending-1',
+          title: 'Test Title 1',
+          body: 'Test Body 1',
+          type: NotificationType.general.toString(),
+          priority: NotificationPriority.defaultPriority.toString(),
+          scheduledFor: now.subtract(const Duration(minutes: 30)),
+          processed: false,
+          createdAt: now.subtract(const Duration(hours: 1)),
+        ),
+        PendingNotificationEntity(
+          id: 'pending-2',
+          title: 'Test Title 2',
+          body: 'Test Body 2',
+          type: NotificationType.attendance.toString(),
+          priority: NotificationPriority.high.toString(),
+          scheduledFor: now.add(const Duration(minutes: 30)), // Future
+          processed: false,
+          createdAt: now.subtract(const Duration(hours: 1)),
+        ),
+      ];
+      
+      when(() => mockNotificationDao.getPendingNotifications())
+          .thenAnswer((_) async => pendingNotifications);
+      
+      when(() => mockNotificationDao.markNotificationProcessed(any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockLocalNotifications.show(
+        any(), any(), any(), any(), payload: any(named: 'payload'),
+      )).thenAnswer((_) async {});
+      
+      when(() => mockNotificationDao.insertNotification(any()))
+          .thenAnswer((_) async {});
+      
+      // Act
+      await notificationService.checkAndDeliverPendingNotifications();
+      
+      // Assert
+      verify(() => mockLocalNotifications.show(
+        any(), 'Test Title 1', 'Test Body 1', any(), payload: any(named: 'payload'),
+      )).called(1);
+      
+      verify(() => mockNotificationDao.markNotificationProcessed('pending-1')).called(1);
+      
+      // Should not process future notification
+      verifyNever(() => mockLocalNotifications.show(
+        any(), 'Test Title 2', 'Test Body 2', any(), payload: any(named: 'payload'),
+      ));
+      verifyNever(() => mockNotificationDao.markNotificationProcessed('pending-2'));
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+### 1. Battery Optimization
+
+- Use WorkManager constraints appropriately to conserve battery
+- Implement batched processing instead of individual operations
+- Utilize exponential backoff for retries
+- Respect battery state (avoid processing when battery is low)
+- Keep background tasks lightweight and efficient
+- Prioritize operations to process critical data first
+- Use connectivity monitoring to avoid unnecessary network checks
+
+### 2. Notification Management
+
+- Group similar notifications to reduce interruptions
+- Implement proper notification channels on Android
+- Respect user preferences for notification delivery
+- Provide clear notification settings
+- Display appropriate notification importance based on content
+- Use rich notification formats when appropriate
+- Handle notification taps to navigate to relevant content
+- Support notification actions for quick responses
+
+### 3. Background Processing
+
+- Make all background tasks idempotent (safe to run multiple times)
+- Implement proper error handling and recovery
+- Use transactions for database operations
+- Log background operations for debugging purposes
+- Ensure tasks complete within their time constraints
+- Implement foreground service for critical operations
+- Respect platform-specific background execution limits
+
+### 4. Sync Strategy
+
+- Use a priority-based sync queue for efficient processing
+- Implement conflict resolution for concurrent changes
+- Store operations with enough context for retry
+- Use optimistic updates for a responsive user experience
+- Implement proper sync status indicators
+- Track sync failures with appropriate retry logic
+- Support manual sync for critical operations
+
+### 5. Testing Considerations
+
+- Mock platform-specific notification APIs for testing
+- Test background tasks with simulated environment
+- Verify battery-efficient implementation
+- Test notifications with various payload types
+- Simulate offline/online transitions for sync testing
+- Verify background task scheduling and execution
+
+- Test notification preferences and delivery rules

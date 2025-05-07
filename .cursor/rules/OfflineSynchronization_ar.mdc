@@ -1,0 +1,1092 @@
+---
+description: Enforces robust offline synchronization patterns for HR Connect, ensuring consistent data handling, conflict resolution, and background processing within the 7-day offline limit.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces robust offline synchronization patterns for HR Connect, ensuring consistent data handling, conflict resolution, and background processing within the 7-day offline limit.
+globs: **/sync/**/*.dart,**/synchronization/**/*.dart,**/offline/**/*.dart
+alwaysApply: false
+---
+
+# Offline Synchronization
+
+This rule provides guidance for implementing the offline synchronization infrastructure in HR Connect, ensuring robust data handling, conflict resolution, and background processing within the 7-day offline limit.
+
+## Overview
+
+HR Connect follows an offline-first approach with sophisticated synchronization mechanisms:
+- Background synchronization with WorkManager
+- Conflict detection and resolution using operational transforms
+- Prioritized sync queue based on business importance
+- SyncProfile aggregate for tracking synchronization status
+- Clear offline indicators in the UI
+- High-priority sync for critical data (attendance records)
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Offline Sync
+  workmanager: ^0.5.2      # Background task scheduling
+  connectivity_plus: ^5.0.2 # Network state monitoring
+  internet_connection_checker: ^1.0.0+1 # Validates actual connectivity
+  drift: ^2.26.1           # Local database
+  flutter_data: ^2.16.0    # Offline-first framework
+  
+  # Conflict Resolution
+  uuid: ^3.0.7             # Unique IDs for sync operations
+  crypto: ^3.0.3           # For hashing in conflict resolution
+  
+  # State Management
+  riverpod: ^2.6.1         # State management
+  
+  # Utils
+  logger: ^2.0.2+1         # Structured logging for sync events
+```
+
+## Core Components
+
+### Sync Operation Model
+
+```dart
+/// Model representing a pending synchronization operation
+@freezed
+class SyncOperation with _$SyncOperation {
+  const factory SyncOperation({
+    required String id,
+    required SyncOperationType type,
+    required String aggregateType,
+    required String aggregateId,
+    required Map<String, dynamic> data,
+    required DateTime timestamp,
+    required SyncPriority priority,
+    SyncStatus? status,
+    String? errorMessage,
+    int? retryCount,
+    DateTime? lastRetryTime,
+  }) = _SyncOperation;
+  
+  factory SyncOperation.fromJson(Map<String, dynamic> json) => 
+      _$SyncOperationFromJson(json);
+  
+  /// Create a new sync operation
+  factory SyncOperation.create({
+    required SyncOperationType type,
+    required String aggregateType,
+    required String aggregateId,
+    required Map<String, dynamic> data,
+    required SyncPriority priority,
+  }) {
+    return SyncOperation(
+      id: const Uuid().v4(),
+      type: type,
+      aggregateType: aggregateType,
+      aggregateId: aggregateId,
+      data: data,
+      timestamp: DateTime.now(),
+      priority: priority,
+      status: SyncStatus.pending,
+      retryCount: 0,
+    );
+  }
+}
+
+/// Type of sync operation
+enum SyncOperationType {
+  create,
+  update,
+  delete,
+  custom,
+}
+
+/// Priority of sync operation
+enum SyncPriority {
+  // Immediate sync when possible
+  critical, 
+  // High-priority data like attendance records
+  high, 
+  // Normal business operations (leave requests, etc.)
+  medium, 
+  // Non-essential data (user preferences, etc.)
+  low, 
+}
+
+/// Status of sync operation
+enum SyncStatus {
+  pending,
+  inProgress,
+  completed,
+  failed,
+  conflicted,
+}
+```
+
+### Sync Queue Repository
+
+```dart
+/// Repository for managing synchronization queue
+abstract class SyncQueueRepository {
+  /// Add a new operation to the sync queue
+  Future<Either<Failure, Unit>> add(SyncOperation operation);
+  
+  /// Get all pending operations
+  Future<Either<Failure, List<SyncOperation>>> getPendingOperations();
+  
+  /// Get operations by priority
+  Future<Either<Failure, List<SyncOperation>>> getByPriority(SyncPriority priority);
+  
+  /// Get operations by aggregate type
+  Future<Either<Failure, List<SyncOperation>>> getByAggregateType(String type);
+  
+  /// Update operation status
+  Future<Either<Failure, Unit>> updateStatus(
+    String operationId,
+    SyncStatus status, {
+    String? errorMessage,
+  });
+  
+  /// Mark operation as completed
+  Future<Either<Failure, Unit>> markAsCompleted(String operationId);
+  
+  /// Mark operation as failed
+  Future<Either<Failure, Unit>> markAsFailed(
+    String operationId, {
+    required String errorMessage,
+    required bool incrementRetry,
+  });
+  
+  /// Mark operation as conflicted
+  Future<Either<Failure, Unit>> markAsConflicted(
+    String operationId, {
+    required String conflictDetails,
+  });
+  
+  /// Remove completed operations
+  Future<Either<Failure, int>> removeCompletedOperations();
+  
+  /// Remove operations by ID
+  Future<Either<Failure, Unit>> removeOperations(List<String> operationIds);
+}
+```
+
+### Implementation with Drift
+
+```dart
+/// Implementation of SyncQueueRepository using Drift
+class SyncQueueRepositoryImpl implements SyncQueueRepository {
+  final Database _database;
+  
+  SyncQueueRepositoryImpl(this._database);
+  
+  @override
+  Future<Either<Failure, Unit>> add(SyncOperation operation) async {
+    try {
+      await _database.syncOperationsDao.insert(operation.toEntity());
+      return const Right(unit);
+    } catch (e) {
+      return Left(DatabaseFailure(e.toString()));
+    }
+  }
+  
+  @override
+  Future<Either<Failure, List<SyncOperation>>> getPendingOperations() async {
+    try {
+      final entities = await _database.syncOperationsDao.getPendingOperations();
+      final operations = entities.map((e) => e.toDomain()).toList();
+      
+      // Sort by priority and timestamp
+      operations.sort((a, b) {
+        // First by priority (critical first)
+        final priorityComparison = a.priority.index.compareTo(b.priority.index);
+        if (priorityComparison != 0) {
+          return priorityComparison;
+        }
+        
+        // Then by timestamp (oldest first for same priority)
+        return a.timestamp.compareTo(b.timestamp);
+      });
+      
+      return Right(operations);
+    } catch (e) {
+      return Left(DatabaseFailure(e.toString()));
+    }
+  }
+  
+  // Other methods implementation...
+}
+```
+
+### Sync Manager Service
+
+```dart
+/// Service for managing synchronization
+class SyncManager {
+  final SyncQueueRepository _syncQueueRepository;
+  final NetworkInfo _networkInfo;
+  final ApiClient _apiClient;
+  final Logger _logger;
+  
+  // Repositories map for handling different aggregate types
+  final Map<String, SyncHandler> _syncHandlers;
+  
+  SyncManager(
+    this._syncQueueRepository,
+    this._networkInfo, 
+    this._apiClient,
+    this._logger,
+    this._syncHandlers,
+  );
+  
+  /// Register a sync handler for an aggregate type
+  void registerHandler(String aggregateType, SyncHandler handler) {
+    _syncHandlers[aggregateType] = handler;
+  }
+  
+  /// Synchronize all pending operations
+  Future<Either<Failure, SyncResult>> syncAll() async {
+    _logger.i('Starting synchronization of all pending operations');
+    
+    // Check network connectivity
+    if (!await _networkInfo.isConnected) {
+      _logger.w('No network connectivity, skipping sync');
+      return Left(NetworkFailure('No network connectivity'));
+    }
+    
+    // Get pending operations
+    final operationsResult = await _syncQueueRepository.getPendingOperations();
+    
+    return operationsResult.fold(
+      (failure) {
+        _logger.e('Failed to get pending operations: ${failure.message}');
+        return Left(failure);
+      },
+      (operations) async {
+        if (operations.isEmpty) {
+          _logger.i('No pending operations to sync');
+          return const Right(SyncResult(
+            totalOperations: 0,
+            successfulOperations: 0,
+            failedOperations: 0,
+            conflictedOperations: 0,
+          ));
+        }
+        
+        _logger.i('Found ${operations.length} pending operations');
+        
+        int successful = 0;
+        int failed = 0;
+        int conflicted = 0;
+        
+        // Process operations by priority
+        for (final operation in operations) {
+          _logger.d('Processing operation: ${operation.id}');
+          
+          // Mark as in progress
+          await _syncQueueRepository.updateStatus(
+            operation.id,
+            SyncStatus.inProgress,
+          );
+          
+          try {
+            // Get appropriate handler for aggregate type
+            final handler = _syncHandlers[operation.aggregateType];
+            
+            if (handler == null) {
+              _logger.e('No handler found for ${operation.aggregateType}');
+              await _syncQueueRepository.markAsFailed(
+                operation.id,
+                errorMessage: 'No handler found for ${operation.aggregateType}',
+                incrementRetry: false,
+              );
+              failed++;
+              continue;
+            }
+            
+            // Process operation with handler
+            final result = await handler.handleOperation(operation);
+            
+            result.fold(
+              (failure) {
+                if (failure is ConflictFailure) {
+                  _logger.w('Conflict detected for operation ${operation.id}');
+                  _syncQueueRepository.markAsConflicted(
+                    operation.id,
+                    conflictDetails: failure.message,
+                  );
+                  conflicted++;
+                } else {
+                  _logger.e('Failed to sync operation ${operation.id}: ${failure.message}');
+                  _syncQueueRepository.markAsFailed(
+                    operation.id,
+                    errorMessage: failure.message,
+                    incrementRetry: true,
+                  );
+                  failed++;
+                }
+              },
+              (_) {
+                _logger.d('Successfully synced operation ${operation.id}');
+                _syncQueueRepository.markAsCompleted(operation.id);
+                successful++;
+              },
+            );
+          } catch (e) {
+            _logger.e('Exception during sync of operation ${operation.id}: $e');
+            await _syncQueueRepository.markAsFailed(
+              operation.id,
+              errorMessage: e.toString(),
+              incrementRetry: true,
+            );
+            failed++;
+          }
+        }
+        
+        return Right(SyncResult(
+          totalOperations: operations.length,
+          successfulOperations: successful,
+          failedOperations: failed,
+          conflictedOperations: conflicted,
+        ));
+      },
+    );
+  }
+  
+  /// Sync specific operation by ID
+  Future<Either<Failure, Unit>> syncOperation(String operationId) async {
+    // Implementation...
+  }
+  
+  /// Sync operations by priority
+  Future<Either<Failure, SyncResult>> syncByPriority(SyncPriority priority) async {
+    // Implementation...
+  }
+}
+```
+
+### Sync Handler Interface
+
+```dart
+/// Interface for handling sync operations for a specific aggregate type
+abstract class SyncHandler {
+  /// Handle a sync operation
+  Future<Either<Failure, Unit>> handleOperation(SyncOperation operation);
+  
+  /// Detect conflicts between local and remote data
+  Future<Either<Failure, ConflictResolution>> detectConflicts(
+    String aggregateId,
+    Map<String, dynamic> localData,
+    Map<String, dynamic> remoteData,
+  );
+  
+  /// Resolve conflicts based on strategy
+  Future<Either<Failure, Map<String, dynamic>>> resolveConflicts(
+    ConflictResolution resolution,
+    Map<String, dynamic> localData,
+    Map<String, dynamic> remoteData,
+  );
+}
+
+/// Implementation for attendance records
+class AttendanceRecordSyncHandler implements SyncHandler {
+  final AttendanceApiService _apiService;
+  final AttendanceLocalDataSource _localDataSource;
+  
+  AttendanceRecordSyncHandler(this._apiService, this._localDataSource);
+  
+  @override
+  Future<Either<Failure, Unit>> handleOperation(SyncOperation operation) async {
+    switch (operation.type) {
+      case SyncOperationType.create:
+      case SyncOperationType.update:
+        return _syncUpsert(operation);
+      case SyncOperationType.delete:
+        return _syncDelete(operation);
+      default:
+        return Left(SyncFailure('Unsupported operation type'));
+    }
+  }
+  
+  Future<Either<Failure, Unit>> _syncUpsert(SyncOperation operation) async {
+    try {
+      // Convert operation data to domain model
+      final record = AttendanceRecord.fromJson(operation.data);
+      
+      // Check if remote version exists
+      final remoteResult = await _apiService.getAttendanceRecord(record.id);
+      
+      return remoteResult.fold(
+        (failure) {
+          // Remote record not found, create new one
+          if (failure is NotFoundFailure) {
+            return _apiService.createAttendanceRecord(record);
+          }
+          return Left(failure);
+        },
+        (remoteRecord) async {
+          // Remote record exists, check for conflicts
+          final conflictResult = await detectConflicts(
+            record.id,
+            record.toJson(),
+            remoteRecord.toJson(),
+          );
+          
+          return conflictResult.fold(
+            (failure) => Left(failure),
+            (resolution) async {
+              if (resolution.hasConflicts) {
+                if (resolution.strategy == ConflictStrategy.manual) {
+                  // Manual resolution needed
+                  return Left(ConflictFailure(
+                    'Manual conflict resolution required',
+                    conflicts: resolution.conflicts,
+                  ));
+                }
+                
+                // Auto-resolve conflicts
+                final resolvedData = await resolveConflicts(
+                  resolution,
+                  record.toJson(),
+                  remoteRecord.toJson(),
+                );
+                
+                return resolvedData.fold(
+                  (failure) => Left(failure),
+                  (mergedData) {
+                    final mergedRecord = AttendanceRecord.fromJson(mergedData);
+                    return _apiService.updateAttendanceRecord(mergedRecord);
+                  },
+                );
+              } else {
+                // No conflicts, just update
+                return _apiService.updateAttendanceRecord(record);
+              }
+            },
+          );
+        },
+      );
+    } catch (e) {
+      return Left(SyncFailure(e.toString()));
+    }
+  }
+  
+  // Other methods...
+}
+```
+
+### Background Sync with WorkManager
+
+```dart
+/// Service for scheduling background sync using WorkManager
+class BackgroundSyncService {
+  static const String syncTaskName = 'hr_connect_background_sync';
+  
+  // Initialize WorkManager
+  Future<void> initialize() async {
+    await Workmanager().initialize(
+      callbackDispatcher,
+      isInDebugMode: kDebugMode,
+    );
+  }
+  
+  // Schedule periodic sync
+  Future<void> schedulePeriodicSync() async {
+    await Workmanager().registerPeriodicTask(
+      syncTaskName,
+      syncTaskName,
+      frequency: const Duration(hours: 1),
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+        requiresBatteryNotLow: true,
+      ),
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+      backoffPolicy: BackoffPolicy.exponential,
+    );
+  }
+  
+  // Request immediate sync
+  Future<void> requestImmediateSync() async {
+    await Workmanager().registerOneOffTask(
+      '${syncTaskName}_immediate',
+      syncTaskName,
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
+      existingWorkPolicy: ExistingWorkPolicy.replace,
+    );
+  }
+  
+  // Cancel all scheduled sync tasks
+  Future<void> cancelAllSyncTasks() async {
+    await Workmanager().cancelAll();
+  }
+}
+
+// Global callback for WorkManager
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  Workmanager().executeTask((taskName, inputData) async {
+    if (taskName == BackgroundSyncService.syncTaskName) {
+      try {
+        // Initialize dependencies
+        final container = ProviderContainer();
+        final syncManager = container.read(syncManagerProvider);
+        
+        // Run synchronization
+        final result = await syncManager.syncAll();
+        
+        return result.fold(
+          (failure) {
+            Logger().e('Background sync failed: ${failure.message}');
+            return false; // Task failed
+          },
+          (syncResult) {
+            Logger().i('Background sync completed: $syncResult');
+            return true; // Task successful
+          },
+        );
+      } catch (e) {
+        Logger().e('Exception in background sync: $e');
+        return false; // Task failed
+      }
+    }
+    return true;
+  });
+}
+```
+
+### Conflict Detection and Resolution
+
+```dart
+/// Model representing a conflict resolution
+@freezed
+class ConflictResolution with _$ConflictResolution {
+  const factory ConflictResolution({
+    required bool hasConflicts,
+    required ConflictStrategy strategy,
+    required List<FieldConflict> conflicts,
+  }) = _ConflictResolution;
+  
+  factory ConflictResolution.noConflicts() => const ConflictResolution(
+    hasConflicts: false,
+    strategy: ConflictStrategy.none,
+    conflicts: [],
+  );
+  
+  factory ConflictResolution.withConflicts({
+    required ConflictStrategy strategy,
+    required List<FieldConflict> conflicts,
+  }) => ConflictResolution(
+    hasConflicts: true,
+    strategy: strategy,
+    conflicts: conflicts,
+  );
+}
+
+/// Model representing a field-level conflict
+@freezed
+class FieldConflict with _$FieldConflict {
+  const factory FieldConflict({
+    required String fieldPath,
+    required dynamic localValue,
+    required dynamic remoteValue,
+    required ConflictResolutionAction action,
+  }) = _FieldConflict;
+}
+
+/// Strategy for resolving conflicts
+enum ConflictStrategy {
+  // No conflicts detected
+  none,
+  // Use server version for all conflicts
+  serverWins,
+  // Use local version for all conflicts
+  localWins,
+  // Use latest timestamp for each field
+  lastWriteWins,
+  // Merge fields based on predefined rules
+  fieldLevelMerge,
+  // Requires user intervention
+  manual,
+}
+
+/// Action for resolving a specific field conflict
+enum ConflictResolutionAction {
+  useLocal,
+  useRemote,
+  useNewer,
+  merge,
+  requireManual,
+}
+
+/// Operational transform for resolving conflicts
+class OperationalTransform {
+  /// Detect field-level conflicts between two JSON objects
+  static List<FieldConflict> detectFieldConflicts(
+    Map<String, dynamic> local,
+    Map<String, dynamic> remote, {
+    String parentPath = '',
+  }) {
+    final conflicts = <FieldConflict>[];
+    
+    // Get all keys from both objects
+    final allKeys = <String>{
+      ...local.keys,
+      ...remote.keys,
+    };
+    
+    for (final key in allKeys) {
+      final currentPath = parentPath.isEmpty ? key : '$parentPath.$key';
+      
+      // Check if key exists in both objects
+      if (!local.containsKey(key)) {
+        // Key only in remote
+        conflicts.add(FieldConflict(
+          fieldPath: currentPath,
+          localValue: null,
+          remoteValue: remote[key],
+          action: ConflictResolutionAction.useRemote,
+        ));
+        continue;
+      }
+      
+      if (!remote.containsKey(key)) {
+        // Key only in local
+        conflicts.add(FieldConflict(
+          fieldPath: currentPath,
+          localValue: local[key],
+          remoteValue: null,
+          action: ConflictResolutionAction.useLocal,
+        ));
+        continue;
+      }
+      
+      final localValue = local[key];
+      final remoteValue = remote[key];
+      
+      // Skip if values are equal
+      if (_deepEquals(localValue, remoteValue)) {
+        continue;
+      }
+      
+      // Recursively check nested objects
+      if (localValue is Map<String, dynamic> && 
+          remoteValue is Map<String, dynamic>) {
+        conflicts.addAll(detectFieldConflicts(
+          localValue,
+          remoteValue,
+          parentPath: currentPath,
+        ));
+      } else {
+        // Values are different primitives or lists
+        conflicts.add(FieldConflict(
+          fieldPath: currentPath,
+          localValue: localValue,
+          remoteValue: remoteValue,
+          action: _determineDefaultAction(localValue, remoteValue),
+        ));
+      }
+    }
+    
+    return conflicts;
+  }
+  
+  /// Apply resolution to create merged data
+  static Map<String, dynamic> applyResolution(
+    ConflictResolution resolution,
+    Map<String, dynamic> local,
+    Map<String, dynamic> remote,
+  ) {
+    // Start with a copy of local data
+    final result = Map<String, dynamic>.from(local);
+    
+    if (!resolution.hasConflicts) {
+      return result;
+    }
+    
+    // Apply field-level resolutions
+    for (final conflict in resolution.conflicts) {
+      final fieldPath = conflict.fieldPath.split('.');
+      
+      switch (conflict.action) {
+        case ConflictResolutionAction.useLocal:
+          // Already using local as base, no action needed
+          break;
+        case ConflictResolutionAction.useRemote:
+          _setNestedValue(result, fieldPath, conflict.remoteValue);
+          break;
+        case ConflictResolutionAction.useNewer:
+          // Assuming we have timestamp info in the field itself
+          // or this was determined externally
+          break;
+        case ConflictResolutionAction.merge:
+          // Custom merge logic would be applied here
+          // For example, merging lists
+          break;
+        case ConflictResolutionAction.requireManual:
+          // Should not happen here - would be handled separately
+          break;
+      }
+    }
+    
+    return result;
+  }
+  
+  /// Set value in a nested object using path
+  static void _setNestedValue(
+    Map<String, dynamic> data,
+    List<String> path,
+    dynamic value,
+  ) {
+    if (path.length == 1) {
+      data[path.first] = value;
+      return;
+    }
+    
+    final key = path.first;
+    final remainingPath = path.sublist(1);
+    
+    if (!data.containsKey(key) || data[key] is! Map<String, dynamic>) {
+      data[key] = <String, dynamic>{};
+    }
+    
+    _setNestedValue(data[key] as Map<String, dynamic>, remainingPath, value);
+  }
+  
+  /// Determine default conflict resolution action
+  static ConflictResolutionAction _determineDefaultAction(
+    dynamic localValue,
+    dynamic remoteValue,
+  ) {
+    // Simple example: prefer remote for primitive values
+    if (localValue is num || localValue is String || localValue is bool) {
+      return ConflictResolutionAction.useRemote;
+    }
+    
+    // For lists, might require manual resolution
+    if (localValue is List) {
+      return ConflictResolutionAction.requireManual;
+    }
+    
+    // Default
+    return ConflictResolutionAction.useRemote;
+  }
+  
+  /// Deep equality check for any values
+  static bool _deepEquals(dynamic a, dynamic b) {
+    if (a == b) return true;
+    
+    if (a is Map<String, dynamic> && b is Map<String, dynamic>) {
+      if (a.length != b.length) return false;
+      
+      for (final key in a.keys) {
+        if (!b.containsKey(key) || !_deepEquals(a[key], b[key])) {
+          return false;
+        }
+      }
+      
+      return true;
+    }
+    
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      
+      for (var i = 0; i < a.length; i++) {
+        if (!_deepEquals(a[i], b[i])) return false;
+      }
+      
+      return true;
+    }
+    
+    return false;
+  }
+}
+```
+
+### Offline Status UI Component
+
+```dart
+/// Widget to display offline status and pending sync operations
+class OfflineStatusIndicator extends ConsumerWidget {
+  const OfflineStatusIndicator({super.key});
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final connectivityStatus = ref.watch(connectivityStatusProvider);
+    final syncStatus = ref.watch(syncStatusProvider);
+    
+    // If online and no pending operations, don't show anything
+    if (connectivityStatus == ConnectivityStatus.online &&
+        syncStatus.pendingOperationsCount == 0) {
+      return const SizedBox.shrink();
+    }
+    
+    return Material(
+      elevation: 2,
+      color: _getBackgroundColor(context, connectivityStatus),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              _getStatusIcon(connectivityStatus),
+              color: Colors.white,
+              size: 16,
+            ),
+            const SizedBox(width: 8),
+            Text(
+              _getStatusMessage(
+                connectivityStatus,
+                syncStatus.pendingOperationsCount,
+              ),
+              style: const TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+            if (syncStatus.pendingOperationsCount > 0 &&
+                connectivityStatus == ConnectivityStatus.online)
+              TextButton(
+                onPressed: () => _syncNow(ref),
+                style: TextButton.styleFrom(
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                ),
+                child: const Text('SYNC NOW'),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+  
+  Color _getBackgroundColor(
+    BuildContext context,
+    ConnectivityStatus status,
+  ) {
+    switch (status) {
+      case ConnectivityStatus.offline:
+        return Colors.red.shade700;
+      case ConnectivityStatus.online:
+        return Colors.orange.shade700; // For pending operations
+      case ConnectivityStatus.limited:
+        return Colors.orange.shade700;
+    }
+  }
+  
+  IconData _getStatusIcon(ConnectivityStatus status) {
+    switch (status) {
+      case ConnectivityStatus.offline:
+        return Icons.cloud_off;
+      case ConnectivityStatus.online:
+        return Icons.sync;
+      case ConnectivityStatus.limited:
+        return Icons.signal_wifi_statusbar_connected_no_internet_4;
+    }
+  }
+  
+  String _getStatusMessage(
+    ConnectivityStatus status,
+    int pendingCount,
+  ) {
+    switch (status) {
+      case ConnectivityStatus.offline:
+        return 'Offline Mode' + (pendingCount > 0 
+            ? ' • $pendingCount pending' 
+            : '');
+      case ConnectivityStatus.online:
+        return '$pendingCount operations pending';
+      case ConnectivityStatus.limited:
+        return 'Limited Connectivity' + (pendingCount > 0 
+            ? ' • $pendingCount pending' 
+            : '');
+    }
+  }
+  
+  void _syncNow(WidgetRef ref) {
+    ref.read(syncManagerProvider).syncAll();
+  }
+}
+```
+
+## Business Rules
+
+### Offline Duration Limit
+- Maximum offline operation period is 7 days (168 hours)
+- When offline duration exceeds limit, warn user and require online authentication
+- Critical operations remain available even beyond 7-day limit
+
+### Synchronization Priority
+1. **Critical Priority** - Security-related operations, error reports
+2. **High Priority** - Attendance records, timesheet submissions
+3. **Medium Priority** - Leave requests, profile updates
+4. **Low Priority** - Configuration changes, preference updates
+
+### Conflict Resolution
+- Server timestamp is the default authority for conflict resolution
+- Field-level merging is attempted before rejecting changes
+- User is notified of conflicts that require manual resolution
+- Critical business data conflicts (attendance, leave) require supervisor approval
+
+### Battery and Network Usage
+- Background sync frequency scales based on battery level
+  - Normal: Every 1 hour
+  - Low Battery: Every 4 hours
+  - Critical Battery: Manual sync only
+- Sync operations are batched to minimize network usage
+- Large sync operations (documents, images) wait for WiFi
+
+## Testing Offline Sync
+
+```dart
+void main() {
+  group('SyncManager', () {
+    late SyncManager syncManager;
+    late MockSyncQueueRepository mockSyncQueueRepository;
+    late MockNetworkInfo mockNetworkInfo;
+    late MockApiClient mockApiClient;
+    late MockLogger mockLogger;
+    late Map<String, MockSyncHandler> mockHandlers;
+    
+    setUp(() {
+      mockSyncQueueRepository = MockSyncQueueRepository();
+      mockNetworkInfo = MockNetworkInfo();
+      mockApiClient = MockApiClient();
+      mockLogger = MockLogger();
+      mockHandlers = {
+        'AttendanceRecord': MockSyncHandler(),
+        'LeaveRequest': MockSyncHandler(),
+      };
+      
+      syncManager = SyncManager(
+        mockSyncQueueRepository,
+        mockNetworkInfo,
+        mockApiClient,
+        mockLogger,
+        mockHandlers,
+      );
+    });
+    
+    test('syncAll should return network failure when offline', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => false);
+      
+      // Act
+      final result = await syncManager.syncAll();
+      
+      // Assert
+      expect(result.isLeft(), true);
+      result.fold(
+        (failure) => expect(failure, isA<NetworkFailure>()),
+        (_) => fail('Should return failure'),
+      );
+      
+      verify(mockNetworkInfo.isConnected).called(1);
+      verifyNoMoreInteractions(mockSyncQueueRepository);
+    });
+    
+    test('syncAll should process pending operations when online', () async {
+      // Arrange
+      when(mockNetworkInfo.isConnected).thenAnswer((_) async => true);
+      
+      final operations = [
+        SyncOperation(
+          id: '1',
+          type: SyncOperationType.create,
+          aggregateType: 'AttendanceRecord',
+          aggregateId: 'att-1',
+          data: {'field': 'value'},
+          timestamp: DateTime.now(),
+          priority: SyncPriority.high,
+          status: SyncStatus.pending,
+        ),
+        SyncOperation(
+          id: '2',
+          type: SyncOperationType.update,
+          aggregateType: 'LeaveRequest',
+          aggregateId: 'leave-1',
+          data: {'field': 'value'},
+          timestamp: DateTime.now(),
+          priority: SyncPriority.medium,
+          status: SyncStatus.pending,
+        ),
+      ];
+      
+      when(mockSyncQueueRepository.getPendingOperations())
+          .thenAnswer((_) async => Right(operations));
+      
+      when(mockSyncQueueRepository.updateStatus(any, any))
+          .thenAnswer((_) async => const Right(unit));
+      
+      when(mockSyncQueueRepository.markAsCompleted(any))
+          .thenAnswer((_) async => const Right(unit));
+      
+      when(mockHandlers['AttendanceRecord']!.handleOperation(any))
+          .thenAnswer((_) async => const Right(unit));
+      
+      when(mockHandlers['LeaveRequest']!.handleOperation(any))
+          .thenAnswer((_) async => const Right(unit));
+      
+      // Act
+      final result = await syncManager.syncAll();
+      
+      // Assert
+      expect(result.isRight(), true);
+      result.fold(
+        (failure) => fail('Should not return failure'),
+        (syncResult) {
+          expect(syncResult.totalOperations, 2);
+          expect(syncResult.successfulOperations, 2);
+          expect(syncResult.failedOperations, 0);
+          expect(syncResult.conflictedOperations, 0);
+        },
+      );
+      
+      verify(mockNetworkInfo.isConnected).called(1);
+      verify(mockSyncQueueRepository.getPendingOperations()).called(1);
+      verify(mockSyncQueueRepository.updateStatus('1', SyncStatus.inProgress)).called(1);
+      verify(mockSyncQueueRepository.updateStatus('2', SyncStatus.inProgress)).called(1);
+      verify(mockHandlers['AttendanceRecord']!.handleOperation(operations[0])).called(1);
+      verify(mockHandlers['LeaveRequest']!.handleOperation(operations[1])).called(1);
+      verify(mockSyncQueueRepository.markAsCompleted('1')).called(1);
+      verify(mockSyncQueueRepository.markAsCompleted('2')).called(1);
+    });
+    
+    // More tests...
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Queue Management**
+   - Store sync operations in local database for persistence
+   - Process operations in order of priority
+   - Implement retry mechanism with exponential backoff
+   - Clean up completed operations periodically
+
+2. **Conflict Resolution**
+   - Use operational transforms for complex data merging
+   - Prefer field-level resolution over document-level
+   - Store original, local, and remote versions for manual resolution
+   - Provide clear UI for conflict resolution
+
+3. **Background Processing**
+   - Use WorkManager for reliable background tasks
+   - Respect battery limitations and network conditions
+   - Batch operations to minimize wakeups
+   - Implement proper error handling and logging
+
+4. **Offline UX**
+   - Display clear offline mode indicators
+   - Show sync status with operation counts
+   - Provide manual sync trigger for users
+   - Implement optimistic UI updates
+
+5. **Testing**
+   - Mock network conditions for offline testing
+   - Create test cases for conflict scenarios
+   - Verify correct handling of timeouts and errors
+
+   - Test battery and resource usage

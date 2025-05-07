@@ -1,0 +1,1352 @@
+---
+description: 
+globs: **/repository_*.dart,**/datasource_*.dart,**/sync_*.dart,**/database_*.dart,**/cache_*.dart,**/connectivity_*.dart,**/features/data/**/*.dart,**/core/database/**/*.dart
+alwaysApply: false
+---
+---
+description: Implementation guidelines for HR Connect's Offline-First Data Infrastructure
+globs: **/repository_*.dart,**/datasource_*.dart,**/sync_*.dart,**/database_*.dart,**/cache_*.dart,**/connectivity_*.dart,**/features/data/**/*.dart,**/core/database/**/*.dart
+alwaysApply: false
+---
+
+# Offline-First Data Infrastructure
+
+This rule provides implementation guidance for the Offline-First Data Infrastructure of HR Connect - a Flutter-based workforce management solution designed to work reliably in areas with intermittent connectivity.
+
+## Feature Overview
+
+The Offline-First Data Infrastructure enables:
+- Complete offline functionality for all core features
+- Local storage with Drift (SQLite) for structured data
+- Flutter Data for offline-first framework integration
+- Background synchronization with WorkManager
+- Conflict detection and resolution mechanisms
+- Prioritized sync queue with business importance ordering
+- Clear offline status indicators in the UI
+- Field-level encryption for sensitive data
+- 7-day (168-hour) offline access limit
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Local Storage
+  drift: ^2.26.1            # Type-safe SQLite database
+  drift_dev: ^2.26.1        # Code generation for Drift
+  flutter_data: ^2.16.0     # Offline-first framework for data management
+  flutter_data_firestore: ^1.5.0  # Firestore adapter for Flutter Data
+  
+  # Security
+  flutter_secure_storage: ^9.2.4  # Secure storage for tokens/keys
+  encrypt: ^5.0.1           # Field-level encryption
+  
+  # Background Processing
+  workmanager: ^0.5.2       # Background task scheduling
+  connectivity_plus: ^5.0.2 # Network connectivity detection
+  internet_connection_checker: ^1.0.0+1  # Actual connectivity validation
+  
+  # State Management & Utils
+  riverpod: ^2.6.1          # State management with providers
+  flutter_riverpod: ^2.6.1  # Flutter integration for Riverpod
+  dartz: ^0.10.1            # Functional error handling
+  uuid: ^3.0.7              # Unique identifiers
+  rxdart: ^0.27.7           # Reactive extensions
+```
+
+## Core Components
+
+### Database Configuration
+
+```dart
+// Define Drift database tables and queries
+@DriftDatabase(
+  tables: [
+    Employees,
+    EmploymentProfiles,
+    Attendances,
+    Requests,
+    Documents,
+    SyncOperations,
+  ],
+  daos: [
+    EmployeeDao,
+    AttendanceDao,
+    RequestDao,
+    DocumentDao,
+    SyncDao,
+  ],
+)
+class AppDatabase extends _$AppDatabase {
+  AppDatabase(QueryExecutor e) : super(e);
+  
+  @override
+  int get schemaVersion => 1;
+  
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (Migrator m) {
+      return m.createAll();
+    },
+    onUpgrade: (Migrator m, int from, int to) async {
+      // Add migration logic for future schema updates
+    },
+    beforeOpen: (details) async {
+      // Perform database validation or initialization before opening
+      await customStatement('PRAGMA foreign_keys = ON');
+    },
+  );
+  
+  // Factory constructor for lazily opening the database
+  static Future<AppDatabase> create() async {
+    final dbFolder = await getApplicationDocumentsDirectory();
+    final file = File(p.join(dbFolder.path, 'hr_connect.sqlite'));
+    
+    return AppDatabase(
+      NativeDatabase.createInBackground(file),
+    );
+  }
+}
+```
+
+### Sync Operation Model
+
+```dart
+// Table definition for sync operations
+class SyncOperations extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get operationId => text().unique()();
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  TextColumn get operation => text()();
+  TextColumn get data => text()();
+  IntColumn get priority => integer()();
+  DateTimeColumn get timestamp => dateTime()();
+  IntColumn get retryCount => integer().withDefault(const Constant(0))();
+  TextColumn get status => text().withDefault(const Constant('pending'))();
+  TextColumn get errorMessage => text().nullable()();
+  DateTimeColumn get lastAttempt => dateTime().nullable()();
+  
+  @override
+  Set<Column> get primaryKey => {id};
+  
+  @override
+  List<Index> get indexes => [
+    Index(
+      'entity_sync_idx', 
+      [entityType, entityId, status],
+    ),
+    Index(
+      'priority_status_idx',
+      [priority, status, timestamp],
+    ),
+  ];
+}
+
+// Data class for sync operations
+class SyncOperation {
+  final String operationId;
+  final String entityType;
+  final String entityId;
+  final SyncOperationType operation;
+  final Map<String, dynamic> data;
+  final int priority;
+  final DateTime timestamp;
+  final int retryCount;
+  final SyncStatus status;
+  final String? errorMessage;
+  final DateTime? lastAttempt;
+  
+  const SyncOperation({
+    required this.operationId,
+    required this.entityType,
+    required this.entityId,
+    required this.operation,
+    required this.data,
+    required this.priority,
+    required this.timestamp,
+    required this.retryCount,
+    required this.status,
+    this.errorMessage,
+    this.lastAttempt,
+  });
+  
+  factory SyncOperation.create({
+    required String entityType,
+    required String entityId,
+    required SyncOperationType operation,
+    required Map<String, dynamic> data,
+    int priority = 5, // Default medium priority (1-10 scale)
+  }) {
+    return SyncOperation(
+      operationId: const Uuid().v4(),
+      entityType: entityType,
+      entityId: entityId,
+      operation: operation,
+      data: data,
+      priority: priority,
+      timestamp: DateTime.now(),
+      retryCount: 0,
+      status: SyncStatus.pending,
+    );
+  }
+}
+
+enum SyncOperationType {
+  create,
+  update,
+  delete,
+  custom,
+}
+
+enum SyncStatus {
+  pending,
+  inProgress,
+  completed,
+  failed,
+  conflicted,
+}
+```
+
+### Repository Pattern Implementation
+
+```dart
+// Base repository interface with offline-first patterns
+abstract class BaseRepository<T, ID> {
+  /// Get entity by ID with offline support
+  Future<Either<Failure, T>> getById(ID id);
+  
+  /// Get all entities (with optional filters)
+  Future<Either<Failure, List<T>>> getAll();
+  
+  /// Save entity (create or update)
+  Future<Either<Failure, T>> save(T entity);
+  
+  /// Delete entity
+  Future<Either<Failure, Unit>> delete(ID id);
+  
+  /// Watch entity for reactive updates
+  Stream<Either<Failure, T>> watch(ID id);
+  
+  /// Watch collection for reactive updates
+  Stream<Either<Failure, List<T>>> watchAll();
+  
+  /// Force sync a specific entity
+  Future<Either<Failure, Unit>> forceSync(ID id);
+}
+
+// Implementation with offline-first approach
+class EmployeeRepositoryImpl implements EmployeeRepository {
+  final EmployeeDao _employeeDao;
+  final EmployeeRemoteDataSource _remoteDataSource;
+  final SyncService _syncService;
+  final ConnectivityService _connectivityService;
+  
+  EmployeeRepositoryImpl(
+    this._employeeDao,
+    this._remoteDataSource,
+    this._syncService,
+    this._connectivityService,
+  );
+  
+  @override
+  Future<Either<EmployeeFailure, Employee>> getById(String id) async {
+    try {
+      // Check cache first
+      final cachedEmployee = await _employeeDao.getEmployeeById(id);
+      
+      // If online, try to refresh data
+      if (await _connectivityService.isConnected) {
+        try {
+          final remoteEmployee = await _remoteDataSource.getEmployeeById(id);
+          
+          // Update local cache with fresh data
+          await _employeeDao.insertOrUpdateEmployee(remoteEmployee);
+          return right(remoteEmployee);
+        } catch (e) {
+          // If network fetch fails but we have cached data, return that
+          if (cachedEmployee != null) {
+            return right(cachedEmployee);
+          }
+          
+          // No cached data and network failed
+          return left(EmployeeFailure.serverError(e.toString()));
+        }
+      }
+      
+      // Offline scenario - return cached data if available
+      if (cachedEmployee != null) {
+        return right(cachedEmployee);
+      }
+      
+      return left(const EmployeeFailure.notFound());
+    } catch (e) {
+      return left(EmployeeFailure.unexpected(e.toString()));
+    }
+  }
+  
+  @override
+  Future<Either<EmployeeFailure, Employee>> save(Employee employee) async {
+    try {
+      // Always save to local storage first
+      await _employeeDao.insertOrUpdateEmployee(employee);
+      
+      // If online, sync immediately
+      if (await _connectivityService.isConnected) {
+        try {
+          final remoteEmployee = await _remoteDataSource.saveEmployee(employee);
+          
+          // Update local with any server-side changes (like timestamps)
+          await _employeeDao.insertOrUpdateEmployee(remoteEmployee);
+          return right(remoteEmployee);
+        } catch (e) {
+          // Queue for later sync if network fails
+          await _syncService.queueOperation(
+            entityType: 'employee',
+            entityId: employee.id,
+            operation: SyncOperationType.update,
+            data: employee.toJson(),
+            priority: 5, // Medium priority
+          );
+          
+          // Return local version with pending sync status
+          final pendingEmployee = employee.copyWith(
+            syncStatus: SyncStatus.pending,
+          );
+          return right(pendingEmployee);
+        }
+      } else {
+        // Queue for later sync when offline
+        await _syncService.queueOperation(
+          entityType: 'employee',
+          entityId: employee.id,
+          operation: SyncOperationType.update,
+          data: employee.toJson(),
+          priority: 5, // Medium priority
+        );
+        
+        // Return local version with pending sync status
+        final pendingEmployee = employee.copyWith(
+          syncStatus: SyncStatus.pending,
+        );
+        return right(pendingEmployee);
+      }
+    } catch (e) {
+      return left(EmployeeFailure.unexpected(e.toString()));
+    }
+  }
+  
+  // Other repository methods implementation...
+}
+```
+
+### Sync Service Implementation
+
+```dart
+class SyncService {
+  final SyncDao _syncDao;
+  final ApiClient _apiClient;
+  final ConnectivityService _connectivityService;
+  final WorkManagerService _workManagerService;
+  
+  SyncService(
+    this._syncDao,
+    this._apiClient,
+    this._connectivityService,
+    this._workManagerService,
+  );
+  
+  /// Queue an operation for later sync
+  Future<void> queueOperation({
+    required String entityType,
+    required String entityId,
+    required SyncOperationType operation,
+    required Map<String, dynamic> data,
+    int priority = 5,
+  }) async {
+    final syncOp = SyncOperation.create(
+      entityType: entityType,
+      entityId: entityId,
+      operation: operation,
+      data: data,
+      priority: priority,
+    );
+    
+    await _syncDao.insertSyncOperation(syncOp);
+    
+    // Schedule background sync if possible
+    await _workManagerService.scheduleSync();
+  }
+  
+  /// Process pending sync operations
+  Future<SyncResult> processPendingOperations() async {
+    if (!await _connectivityService.isConnected) {
+      return SyncResult(
+        success: false,
+        message: 'No internet connection',
+        operationsProcessed: 0,
+        operationsFailed: 0,
+      );
+    }
+    
+    // Get pending operations sorted by priority
+    final pendingOps = await _syncDao.getPendingOperationsSorted();
+    
+    int processed = 0;
+    int failed = 0;
+    
+    for (final op in pendingOps) {
+      try {
+        // Mark as in progress
+        await _syncDao.updateOperationStatus(
+          op.operationId,
+          SyncStatus.inProgress,
+          DateTime.now(),
+        );
+        
+        // Process based on operation type
+        switch (op.operation) {
+          case SyncOperationType.create:
+          case SyncOperationType.update:
+            await _apiClient.sendRequest(
+              '/${op.entityType}/${op.operation == SyncOperationType.create ? 'create' : 'update'}',
+              method: 'POST',
+              data: op.data,
+            );
+            break;
+          case SyncOperationType.delete:
+            await _apiClient.sendRequest(
+              '/${op.entityType}/${op.entityId}',
+              method: 'DELETE',
+            );
+            break;
+          case SyncOperationType.custom:
+            await _apiClient.sendRequest(
+              '/${op.entityType}/custom',
+              method: 'POST',
+              data: op.data,
+            );
+            break;
+        }
+        
+        // Mark as completed
+        await _syncDao.updateOperationStatus(
+          op.operationId,
+          SyncStatus.completed,
+          DateTime.now(),
+        );
+        
+        processed++;
+      } catch (e) {
+        // Increment retry count and mark as failed if max retries reached
+        final updatedOp = await _syncDao.incrementRetryCount(op.operationId);
+        
+        if (updatedOp.retryCount >= 5) { // Max retry count
+          await _syncDao.updateOperationStatus(
+            op.operationId,
+            SyncStatus.failed,
+            DateTime.now(),
+            errorMessage: e.toString(),
+          );
+        }
+        
+        failed++;
+      }
+    }
+    
+    return SyncResult(
+      success: failed == 0,
+      message: 'Sync completed with $processed operations processed, $failed failed',
+      operationsProcessed: processed,
+      operationsFailed: failed,
+    );
+  }
+  
+  /// Force sync specific entity
+  Future<Either<SyncFailure, Unit>> forceSyncEntity({
+    required String entityType,
+    required String entityId,
+  }) async {
+    if (!await _connectivityService.isConnected) {
+      return left(const SyncFailure.noConnection());
+    }
+    
+    try {
+      // Get pending operations for this entity
+      final pendingOps = await _syncDao.getEntityOperations(
+        entityType,
+        entityId,
+        SyncStatus.pending,
+      );
+      
+      for (final op in pendingOps) {
+        try {
+          // Process operation...
+          // Similar to processPendingOperations but only for this entity
+          
+          // Mark as completed
+          await _syncDao.updateOperationStatus(
+            op.operationId,
+            SyncStatus.completed,
+            DateTime.now(),
+          );
+        } catch (e) {
+          return left(SyncFailure.operationFailed(e.toString()));
+        }
+      }
+      
+      return right(unit);
+    } catch (e) {
+      return left(SyncFailure.unexpected(e.toString()));
+    }
+  }
+  
+  /// Check if entity has pending sync operations
+  Future<bool> hasEntityPendingSync(String entityType, String entityId) async {
+    final count = await _syncDao.countEntityPendingOperations(
+      entityType,
+      entityId,
+    );
+    return count > 0;
+  }
+  
+  // Additional methods...
+}
+```
+
+### Connectivity Service
+
+```dart
+class ConnectivityService {
+  late StreamSubscription<ConnectivityResult> _subscription;
+  final _connectivityStream = BehaviorSubject<ConnectivityStatus>();
+  late final Stream<ConnectivityStatus> connectivityStream;
+  
+  ConnectivityService() {
+    // Initialize connectivity monitoring
+    connectivityStream = _connectivityStream.stream.asBroadcastStream();
+    _subscription = Connectivity().onConnectivityChanged.listen(_updateConnectionStatus);
+    
+    // Check initial state
+    Connectivity().checkConnectivity().then(_updateConnectionStatus);
+  }
+  
+  /// Check if device is currently connected
+  Future<bool> isConnected() async {
+    final connectivityResult = await Connectivity().checkConnectivity();
+    
+    if (connectivityResult == ConnectivityResult.none) {
+      return false;
+    }
+    
+    // Double-check with actual internet connection
+    return InternetConnectionChecker().hasConnection;
+  }
+  
+  /// Update connection status in stream
+  void _updateConnectionStatus(ConnectivityResult result) async {
+    if (result == ConnectivityResult.none) {
+      _connectivityStream.add(ConnectivityStatus.offline);
+      return;
+    }
+    
+    // Verify actual internet connectivity
+    final hasInternet = await InternetConnectionChecker().hasConnection;
+    _connectivityStream.add(
+      hasInternet 
+          ? ConnectivityStatus.online 
+          : ConnectivityStatus.limited
+    );
+  }
+  
+  /// Clean up resources
+  void dispose() {
+    _subscription.cancel();
+    _connectivityStream.close();
+  }
+}
+
+enum ConnectivityStatus {
+  online,
+  offline,
+  limited,
+}
+```
+
+### WorkManager Setup
+
+```dart
+class WorkManagerService {
+  static const syncTaskName = 'com.hrconnect.sync';
+  static const syncTaskFrequency = Duration(hours: 1);
+  
+  /// Initialize WorkManager
+  Future<void> initialize() async {
+    await Workmanager().initialize(
+      callbackDispatcher,
+      isInDebugMode: false,
+    );
+  }
+  
+  /// Schedule periodic sync
+  Future<void> scheduleSync() async {
+    await Workmanager().registerPeriodicTask(
+      syncTaskName,
+      syncTaskName,
+      frequency: syncTaskFrequency,
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+        batteryNotLow: true,
+      ),
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+      backoffPolicy: BackoffPolicy.exponential,
+    );
+  }
+  
+  /// Schedule one-time sync
+  Future<void> scheduleOneTimeSync() async {
+    await Workmanager().registerOneOffTask(
+      '${syncTaskName}_${DateTime.now().millisecondsSinceEpoch}',
+      syncTaskName,
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
+      backoffPolicy: BackoffPolicy.linear,
+    );
+  }
+  
+  /// Cancel all scheduled syncs
+  Future<void> cancelAllSyncs() async {
+    await Workmanager().cancelAll();
+  }
+}
+
+// Top-level callback function outside of any class
+void callbackDispatcher() {
+  Workmanager().executeTask((taskName, inputData) async {
+    if (taskName == WorkManagerService.syncTaskName) {
+      final syncService = await getIt<SyncService>();
+      await syncService.processPendingOperations();
+    }
+    return true;
+  });
+}
+```
+
+### Field-Level Encryption
+
+```dart
+class EncryptionService {
+  final FlutterSecureStorage _secureStorage;
+  late Encrypter _encrypter;
+  late IV _iv;
+  
+  EncryptionService(this._secureStorage);
+  
+  /// Initialize encryption keys
+  Future<void> initialize() async {
+    // Try to get existing key
+    String? encryptionKey = await _secureStorage.read(key: 'encryption_key');
+    
+    if (encryptionKey == null) {
+      // Generate new key if none exists
+      final key = Encryption.generateRandomKey();
+      encryptionKey = base64Url.encode(key);
+      await _secureStorage.write(key: 'encryption_key', value: encryptionKey);
+    }
+    
+    // Get or generate IV
+    String? ivString = await _secureStorage.read(key: 'encryption_iv');
+    if (ivString == null) {
+      final iv = IV.fromLength(16); // 16 bytes for AES
+      ivString = base64Url.encode(iv.bytes);
+      await _secureStorage.write(key: 'encryption_iv', value: ivString);
+      _iv = iv;
+    } else {
+      _iv = IV.fromBase64(ivString);
+    }
+    
+    // Create encrypter with stored/generated key
+    final key = Key.fromBase64(encryptionKey);
+    _encrypter = Encrypter(AES(key, mode: AESMode.cbc));
+  }
+  
+  /// Encrypt sensitive data
+  String encryptData(String plainText) {
+    return _encrypter.encrypt(plainText, iv: _iv).base64;
+  }
+  
+  /// Decrypt sensitive data
+  String decryptData(String encryptedText) {
+    return _encrypter.decrypt64(encryptedText, iv: _iv);
+  }
+  
+  /// Encrypt a map's specific fields
+  Map<String, dynamic> encryptFields(
+    Map<String, dynamic> data,
+    List<String> fieldsToEncrypt,
+  ) {
+    final result = Map<String, dynamic>.from(data);
+    
+    for (final field in fieldsToEncrypt) {
+      if (result.containsKey(field) && result[field] != null) {
+        // Only encrypt strings
+        if (result[field] is String) {
+          result['${field}_encrypted'] = encryptData(result[field]);
+          result.remove(field);
+        }
+      }
+    }
+    
+    return result;
+  }
+  
+  /// Decrypt a map's encrypted fields
+  Map<String, dynamic> decryptFields(Map<String, dynamic> data) {
+    final result = Map<String, dynamic>.from(data);
+    final encryptedFields = result.keys
+        .where((key) => key.endsWith('_encrypted'))
+        .toList();
+    
+    for (final encryptedField in encryptedFields) {
+      final originalField = encryptedField.replaceAll('_encrypted', '');
+      result[originalField] = decryptData(result[encryptedField]);
+      result.remove(encryptedField);
+    }
+    
+    return result;
+  }
+}
+```
+
+## Business Rules
+
+### 1. Offline Access Limits
+
+- **7-Day Rule**: Offline access expires after 7 days (168 hours) without synchronization
+- **Expiry Handling**:
+  - Display warning messages at 5 days, 6 days, and 6.5 days
+  - Force login required when limit is reached
+  - Preserve offline data for recovery upon successful authentication
+
+- **Priority Access**:
+  - Attendance recording remains functional even after other features expire
+  - Emergency contact information remains accessible regardless of offline duration
+  - Critical documents (marked as such) remain available offline indefinitely
+
+### 2. Sync Prioritization
+
+- **Priority Levels** (1-10 scale):
+  - Priority 10 (Highest): Attendance records, critical approvals
+  - Priority 8-9: Leave requests, time-sensitive approvals
+  - Priority 5-7: Profile updates, document uploads
+  - Priority 1-4: Non-critical updates, comments, preferences
+
+- **Sync Rules**:
+  - Higher priority items sync first when connection is established
+  - Same-priority items sync in chronological order (oldest first)
+  - Failed operations retry with exponential backoff up to 5 times
+  - Force sync option available for user-selected critical items
+
+### 3. Conflict Resolution
+
+- **Last-Write Wins**:
+  - Default strategy for most entities
+  - Server timestamp is the source of truth for determining "last"
+
+- **Strategic Merge**:
+  - Applied to complex entities like employee profiles
+  - Field-by-field comparison to merge non-conflicting changes
+  - User notification for manual resolution of direct conflicts
+
+- **Approval Chain Conflicts**:
+  - Approved items cannot be retroactively rejected
+  - Parallel approvals merge by preserving all approval signatures
+  - Rejected items with subsequent approval prioritize the approval
+
+### 4. Data Security
+
+- **Field-Level Encryption**:
+  - Salary information must be encrypted at all times
+  - Personal identification numbers (SSN, tax ID) must be encrypted
+  - Banking details must be encrypted
+  - Medical information must be encrypted
+
+- **Key Management**:
+  - Encryption keys stored in secure storage
+  - Key rotation every 90 days
+  - Unique device salt added to encryption to prevent cross-device decryption
+
+- **Offline Security**:
+  - Biometric or PIN verification required after 4 hours of inactivity
+  - Sensitive reports expire after 24 hours offline
+  - Export functionality disabled in offline mode
+
+### 5. Connection Management
+
+- **Connection Types**:
+  - Full Online: All features available with real-time sync
+  - Limited Connectivity: Essential operations only with optimized data transfer
+  - Offline: Complete local functionality with sync queue
+
+- **Transition Rules**:
+  - Auto-sync on transition from offline to online
+  - Bandwidth-aware sync (prioritize smaller operations on weak connections)
+  - Background sync only on unmetered connections unless user overrides
+  - Sync paused during active user operations to avoid UI disruption
+
+## Repositories
+
+### Sync Repository
+
+```dart
+abstract class SyncRepository {
+  /// Get pending sync operations
+  Future<List<SyncOperation>> getPendingOperations();
+  
+  /// Get pending operations sorted by priority and timestamp
+  Future<List<SyncOperation>> getPendingOperationsSorted();
+  
+  /// Get operations for a specific entity
+  Future<List<SyncOperation>> getEntityOperations(
+    String entityType,
+    String entityId,
+    SyncStatus status,
+  );
+  
+  /// Add new sync operation
+  Future<void> addOperation(SyncOperation operation);
+  
+  /// Update operation status
+  Future<void> updateOperationStatus(
+    String operationId,
+    SyncStatus status,
+    DateTime timestamp, {
+    String? errorMessage,
+  });
+  
+  /// Increment retry count for failed operation
+  Future<SyncOperation> incrementRetryCount(String operationId);
+  
+  /// Count pending operations for entity
+  Future<int> countEntityPendingOperations(
+    String entityType,
+    String entityId,
+  );
+  
+  /// Get sync statistics
+  Future<SyncStatistics> getSyncStatistics();
+  
+  /// Delete completed operations older than given date
+  Future<int> cleanupCompletedOperations(DateTime olderThan);
+  
+  /// Watch sync queue changes
+  Stream<List<SyncOperation>> watchPendingOperations();
+}
+```
+
+### Data Repository
+
+```dart
+abstract class DataRepository<T, ID> {
+  /// Get entity by ID (offline-first)
+  Future<Either<Failure, T>> getById(ID id);
+  
+  /// Get all entities with optional filtering
+  Future<Either<Failure, List<T>>> getAll({
+    Map<String, dynamic>? filters,
+    int? limit,
+    int? offset,
+    String? orderBy,
+    bool descending = false,
+  });
+  
+  /// Save entity (create or update)
+  Future<Either<Failure, T>> save(T entity);
+  
+  /// Delete entity
+  Future<Either<Failure, Unit>> delete(ID id);
+  
+  /// Check if entity exists locally
+  Future<bool> existsLocally(ID id);
+  
+  /// Check if entity has pending sync operations
+  Future<bool> hasPendingSync(ID id);
+  
+  /// Force sync entity with server
+  Future<Either<Failure, Unit>> forceSync(ID id);
+  
+  /// Get sync status for entity
+  Future<SyncStatus> getSyncStatus(ID id);
+  
+  /// Watch entity for reactive updates
+  Stream<Either<Failure, T>> watch(ID id);
+  
+  /// Watch collection for reactive updates
+  Stream<Either<Failure, List<T>>> watchAll({
+    Map<String, dynamic>? filters,
+    int? limit,
+    String? orderBy,
+    bool descending = false,
+  });
+}
+```
+
+### Shared Preferences Repository
+
+```dart
+abstract class PreferencesRepository {
+  /// Get last sync timestamp
+  Future<DateTime?> getLastSyncTime();
+  
+  /// Update last sync timestamp
+  Future<void> updateLastSyncTime(DateTime timestamp);
+  
+  /// Get offline access start time
+  Future<DateTime?> getOfflineStartTime();
+  
+  /// Set offline access start time
+  Future<void> setOfflineStartTime(DateTime timestamp);
+  
+  /// Check if offline access is expired
+  Future<bool> isOfflineAccessExpired();
+  
+  /// Get offline access remaining time
+  Future<Duration> getOfflineAccessRemainingTime();
+  
+  /// Reset offline access timer
+  Future<void> resetOfflineAccessTimer();
+  
+  /// Get sync preferences
+  Future<SyncPreferences> getSyncPreferences();
+  
+  /// Update sync preferences
+  Future<void> updateSyncPreferences(SyncPreferences preferences);
+}
+```
+
+## Testing Guidelines
+
+### 1. Offline Data Storage Tests
+
+```dart
+void main() {
+  late AppDatabase database;
+  late EmployeeDao employeeDao;
+  
+  setUp(() async {
+    // Create in-memory database for testing
+    database = AppDatabase(NativeDatabase.memory());
+    employeeDao = database.employeeDao;
+  });
+  
+  tearDown(() async {
+    await database.close();
+  });
+  
+  group('EmployeeDao', () {
+    test('should insert and retrieve employee', () async {
+      // Arrange
+      final employee = Employee(
+        id: 'emp-123',
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john.doe@example.com',
+        dateOfBirth: DateTime(1990, 1, 1),
+        gender: Gender.male,
+        employeeCode: 'EMP-123',
+        status: EmploymentStatus.active,
+        hireDate: DateTime(2022, 1, 1),
+        syncStatus: SyncStatus.synced,
+      );
+      
+      // Act
+      await employeeDao.insertOrUpdateEmployee(employee);
+      final result = await employeeDao.getEmployeeById('emp-123');
+      
+      // Assert
+      expect(result, isNotNull);
+      expect(result!.id, employee.id);
+      expect(result.firstName, employee.firstName);
+      expect(result.email, employee.email);
+    });
+    
+    test('should update existing employee', () async {
+      // Arrange
+      final employee = Employee(
+        id: 'emp-123',
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john.doe@example.com',
+        dateOfBirth: DateTime(1990, 1, 1),
+        gender: Gender.male,
+        employeeCode: 'EMP-123',
+        status: EmploymentStatus.active,
+        hireDate: DateTime(2022, 1, 1),
+        syncStatus: SyncStatus.synced,
+      );
+      
+      // Initial insert
+      await employeeDao.insertOrUpdateEmployee(employee);
+      
+      // Update
+      final updatedEmployee = employee.copyWith(
+        firstName: 'Jane',
+        email: 'jane.doe@example.com',
+        syncStatus: SyncStatus.pending,
+      );
+      
+      // Act
+      await employeeDao.insertOrUpdateEmployee(updatedEmployee);
+      final result = await employeeDao.getEmployeeById('emp-123');
+      
+      // Assert
+      expect(result, isNotNull);
+      expect(result!.firstName, 'Jane');
+      expect(result.email, 'jane.doe@example.com');
+      expect(result.syncStatus, SyncStatus.pending);
+    });
+    
+    test('should delete employee', () async {
+      // Arrange
+      final employee = Employee(
+        id: 'emp-123',
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john.doe@example.com',
+        dateOfBirth: DateTime(1990, 1, 1),
+        gender: Gender.male,
+        employeeCode: 'EMP-123',
+        status: EmploymentStatus.active,
+        hireDate: DateTime(2022, 1, 1),
+        syncStatus: SyncStatus.synced,
+      );
+      
+      await employeeDao.insertOrUpdateEmployee(employee);
+      
+      // Act
+      await employeeDao.deleteEmployee('emp-123');
+      final result = await employeeDao.getEmployeeById('emp-123');
+      
+      // Assert
+      expect(result, isNull);
+    });
+  });
+}
+```
+
+### 2. Sync Service Tests
+
+```dart
+void main() {
+  late MockSyncDao mockSyncDao;
+  late MockApiClient mockApiClient;
+  late MockConnectivityService mockConnectivityService;
+  late MockWorkManagerService mockWorkManagerService;
+  late SyncService syncService;
+  
+  setUp(() {
+    mockSyncDao = MockSyncDao();
+    mockApiClient = MockApiClient();
+    mockConnectivityService = MockConnectivityService();
+    mockWorkManagerService = MockWorkManagerService();
+    
+    syncService = SyncService(
+      mockSyncDao,
+      mockApiClient,
+      mockConnectivityService,
+      mockWorkManagerService,
+    );
+  });
+  
+  group('SyncService', () {
+    test('should queue operation for later sync', () async {
+      // Arrange
+      when(() => mockSyncDao.insertSyncOperation(any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockWorkManagerService.scheduleSync())
+          .thenAnswer((_) async {});
+      
+      // Act
+      await syncService.queueOperation(
+        entityType: 'employee',
+        entityId: 'emp-123',
+        operation: SyncOperationType.update,
+        data: {'name': 'John'},
+      );
+      
+      // Assert
+      verify(() => mockSyncDao.insertSyncOperation(any())).called(1);
+      verify(() => mockWorkManagerService.scheduleSync()).called(1);
+    });
+    
+    test('should not process operations when offline', () async {
+      // Arrange
+      when(() => mockConnectivityService.isConnected)
+          .thenAnswer((_) async => false);
+      
+      // Act
+      final result = await syncService.processPendingOperations();
+      
+      // Assert
+      expect(result.success, false);
+      expect(result.message, 'No internet connection');
+      expect(result.operationsProcessed, 0);
+      verifyNever(() => mockSyncDao.getPendingOperationsSorted());
+    });
+    
+    test('should process pending operations when online', () async {
+      // Arrange
+      final operations = [
+        SyncOperation(
+          operationId: 'op-1',
+          entityType: 'employee',
+          entityId: 'emp-123',
+          operation: SyncOperationType.update,
+          data: {'name': 'John'},
+          priority: 5,
+          timestamp: DateTime.now(),
+          retryCount: 0,
+          status: SyncStatus.pending,
+        ),
+      ];
+      
+      when(() => mockConnectivityService.isConnected)
+          .thenAnswer((_) async => true);
+      
+      when(() => mockSyncDao.getPendingOperationsSorted())
+          .thenAnswer((_) async => operations);
+      
+      when(() => mockSyncDao.updateOperationStatus(any(), any(), any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockApiClient.sendRequest(any(), method: any(named: 'method'), data: any(named: 'data')))
+          .thenAnswer((_) async => {'success': true});
+      
+      // Act
+      final result = await syncService.processPendingOperations();
+      
+      // Assert
+      expect(result.success, true);
+      expect(result.operationsProcessed, 1);
+      verify(() => mockSyncDao.updateOperationStatus('op-1', SyncStatus.completed, any())).called(1);
+    });
+    
+    test('should handle API errors during sync', () async {
+      // Arrange
+      final operations = [
+        SyncOperation(
+          operationId: 'op-1',
+          entityType: 'employee',
+          entityId: 'emp-123',
+          operation: SyncOperationType.update,
+          data: {'name': 'John'},
+          priority: 5,
+          timestamp: DateTime.now(),
+          retryCount: 0,
+          status: SyncStatus.pending,
+        ),
+      ];
+      
+      when(() => mockConnectivityService.isConnected)
+          .thenAnswer((_) async => true);
+      
+      when(() => mockSyncDao.getPendingOperationsSorted())
+          .thenAnswer((_) async => operations);
+      
+      when(() => mockSyncDao.updateOperationStatus(any(), any(), any(), errorMessage: any(named: 'errorMessage')))
+          .thenAnswer((_) async {});
+      
+      when(() => mockApiClient.sendRequest(any(), method: any(named: 'method'), data: any(named: 'data')))
+          .thenThrow(Exception('API error'));
+      
+      when(() => mockSyncDao.incrementRetryCount('op-1'))
+          .thenAnswer((_) async => operations.first.copyWith(retryCount: 1));
+      
+      // Act
+      final result = await syncService.processPendingOperations();
+      
+      // Assert
+      expect(result.success, false);
+      expect(result.operationsFailed, 1);
+      verify(() => mockSyncDao.incrementRetryCount('op-1')).called(1);
+    });
+  });
+}
+```
+
+### 3. Repository Tests
+
+```dart
+void main() {
+  late MockEmployeeDao mockEmployeeDao;
+  late MockEmployeeRemoteDataSource mockRemoteDataSource;
+  late MockSyncService mockSyncService;
+  late MockConnectivityService mockConnectivityService;
+  late EmployeeRepositoryImpl repository;
+  
+  setUp(() {
+    mockEmployeeDao = MockEmployeeDao();
+    mockRemoteDataSource = MockEmployeeRemoteDataSource();
+    mockSyncService = MockSyncService();
+    mockConnectivityService = MockConnectivityService();
+    
+    repository = EmployeeRepositoryImpl(
+      mockEmployeeDao,
+      mockRemoteDataSource,
+      mockSyncService,
+      mockConnectivityService,
+    );
+  });
+  
+  group('EmployeeRepository', () {
+    test('should return cached data when offline', () async {
+      // Arrange
+      final employee = Employee(
+        id: 'emp-123',
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john@example.com',
+        // Other fields...
+      );
+      
+      when(() => mockConnectivityService.isConnected)
+          .thenAnswer((_) async => false);
+      
+      when(() => mockEmployeeDao.getEmployeeById('emp-123'))
+          .thenAnswer((_) async => employee);
+      
+      // Act
+      final result = await repository.getById('emp-123');
+      
+      // Assert
+      expect(result.isRight(), true);
+      result.fold(
+        (l) => fail('Should not return failure'),
+        (r) => expect(r, employee),
+      );
+      verifyNever(() => mockRemoteDataSource.getEmployeeById(any()));
+    });
+    
+    test('should queue sync when saving offline', () async {
+      // Arrange
+      final employee = Employee(
+        id: 'emp-123',
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john@example.com',
+        // Other fields...
+      );
+      
+      when(() => mockConnectivityService.isConnected)
+          .thenAnswer((_) async => false);
+      
+      when(() => mockEmployeeDao.insertOrUpdateEmployee(any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockSyncService.queueOperation(
+        entityType: any(named: 'entityType'),
+        entityId: any(named: 'entityId'),
+        operation: any(named: 'operation'),
+        data: any(named: 'data'),
+        priority: any(named: 'priority'),
+      )).thenAnswer((_) async {});
+      
+      // Act
+      final result = await repository.save(employee);
+      
+      // Assert
+      expect(result.isRight(), true);
+      verify(() => mockEmployeeDao.insertOrUpdateEmployee(any())).called(1);
+      verify(() => mockSyncService.queueOperation(
+        entityType: 'employee',
+        entityId: 'emp-123',
+        operation: SyncOperationType.update,
+        data: any(named: 'data'),
+        priority: 5,
+      )).called(1);
+    });
+    
+    test('should sync immediately when online', () async {
+      // Arrange
+      final employee = Employee(
+        id: 'emp-123',
+        firstName: 'John',
+        lastName: 'Doe',
+        email: 'john@example.com',
+        // Other fields...
+      );
+      
+      final updatedEmployee = employee.copyWith(
+        syncStatus: SyncStatus.synced,
+      );
+      
+      when(() => mockConnectivityService.isConnected)
+          .thenAnswer((_) async => true);
+      
+      when(() => mockEmployeeDao.insertOrUpdateEmployee(any()))
+          .thenAnswer((_) async {});
+      
+      when(() => mockRemoteDataSource.saveEmployee(any()))
+          .thenAnswer((_) async => updatedEmployee);
+      
+      // Act
+      final result = await repository.save(employee);
+      
+      // Assert
+      expect(result.isRight(), true);
+      verify(() => mockRemoteDataSource.saveEmployee(any())).called(1);
+      verifyNever(() => mockSyncService.queueOperation(
+        entityType: any(named: 'entityType'),
+        entityId: any(named: 'entityId'),
+        operation: any(named: 'operation'),
+        data: any(named: 'data'),
+        priority: any(named: 'priority'),
+      ));
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+### 1. Repository Pattern
+
+- Implement three-tier repository pattern (Remote, Local, Repository)
+- Use the Repository pattern as a facade for data operations
+- Ensure clear separation between data sources
+- Always handle offline scenarios gracefully
+- Apply encryption at the Repository layer
+
+### 2. Background Processing
+
+- Use WorkManager for reliable background sync
+- Implement proper backoff strategies for failed operations
+- Monitor battery impact and use battery-aware constraints
+- Schedule syncs during periods of low activity
+- Process operations in batches for better performance
+
+### 3. Error Handling
+
+- Implement comprehensive error handling for all network operations
+- Use Either type pattern for clear success/failure paths
+- Create specific failure classes for different error types
+- Always provide fallback mechanisms for critical features
+- Log sync failures for troubleshooting
+
+### 4. Performance
+
+- Implement efficient database queries with proper indexing
+- Use batched operations for multiple database changes
+- Minimize serialization/deserialization overhead
+- Apply data compression for large payloads
+- Optimize sync queue processing for speed and reliability
+
+### 5. User Experience
+
+- Always provide clear sync status indicators
+- Show meaningful error messages for sync failures
+- Implement optimistic UI updates for immediate feedback
+- Allow manual sync initiation for important data
+
+- Display offline access countdown when approaching the 7-day limit

@@ -1,0 +1,163 @@
+# Task ID: 6
+# Title: Time Management Features
+# Status: pending
+# Dependencies: 4, 5
+# Priority: medium
+# Description: Implement the comprehensive time management system including leave management and requests.
+# Details:
+Create the RequestProfile aggregate for leave, overtime, and other requests. Implement leave management with different types (emergency, personal, sick, vacation, etc.). Develop approval workflows with escalation for disapproved requests. Implement overtime request processing with configurable limits. Create UI components for leave requests, approval interfaces, and team schedule visualization. Implement time-based business rules (24h emergency leave, 30-day personal leave).
+
+# Test Strategy:
+Test leave request creation and validation. Verify approval workflows function correctly. Test business rule enforcement for different leave types. Create widget tests for time management UI components. Validate offline capabilities for leave requests.
+
+# Subtasks:
+## 06-001-01. Design the RequestProfile domain model with core properties (requestId, employeeId, requestDate, status, approvalChain). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-001-02. Define enums for request types (LEAVE, OVERTIME, OTHER) and status values (PENDING, APPROVED, REJECTED, ESCALATED). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-001-03. Implement validation rules and state transition logic for requests. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-001-04. Create repository interfaces and implementations for RequestProfile persistence. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-001-05. Write unit tests for RequestProfile creation, validation, and state transitions. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-002-01. Extend RequestProfile to support leave-specific attributes (type, duration, reason). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-002-02. Implement different leave types (emergency, personal, sick, vacation) with validation rules. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-002-03. Create services for leave balance calculations and availability checks. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-002-04. Implement business rules (24h emergency leave, 30-day advance notice for personal leave). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-002-05. Build repository methods and unit tests for leave history and balances. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-003-01. Create ApprovalWorkflow service to manage approval chains for requests. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-003-02. Implement notification mechanisms for pending approvals. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-003-03. Build escalation logic for disapproved requests (automatic routing to higher management). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-003-04. Implement approval delegation for unavailable managers. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-003-05. Write unit tests for workflow scenarios and event handlers. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-004-01. Extend RequestProfile with overtime-specific attributes (requested hours, justification, project reference). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-004-02. Implement configurable overtime limits based on role, department, and time period. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-004-03. Create validation services for overtime eligibility and company policy compliance. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-004-04. Develop calculation logic for overtime compensation (pay or time-off). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-004-05. Build repository methods and unit tests for overtime reporting and analytics. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-005-01. Design UI components for submitting leave requests (type selection, date range pickers). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-005-02. Create approval interface for managers (review, approve/reject, comment). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-005-03. Develop team schedule visualization (approved time-off, overtime). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-005-04. Implement employee dashboard (leave balances, request history, status tracking). [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+
+## 06-005-05. Build notification components and responsive layouts for desktop/mobile. [pending]
+### Dependencies: None
+### Description: 
+### Details:
+Before implementation, review all relevant Cursor rules in .cursor/rules/. Ensure your approach aligns with project standards and best practices.
+

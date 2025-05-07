@@ -1,0 +1,949 @@
+---
+description: 
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces battery optimization for background synchronization to ensure consumption is less than 5% per day
+globs: "**/sync*.dart,**/background*.dart,**/workmanager*.dart,**/battery*.dart"
+alwaysApply: false
+@batterySyncOptimization
+---
+
+# Background Sync Battery Optimization
+
+This rule provides guidance for implementing battery-efficient background synchronization in the HR Connect application. It focuses on ensuring that background sync operations consume less than 5% of the device's battery per day, as specified in the project constraints.
+
+## Core Principles
+
+1. Background sync must consume less than 5% of device battery per day
+2. Sync frequency must be adaptive based on connectivity, battery level, and data priority
+3. Sync operations must be batched to minimize wake cycles
+4. Proper connectivity checks must be performed before sync operations
+5. Battery usage must be monitored and operations adjusted accordingly
+
+## Required Packages
+
+```yaml
+dependencies:
+  # Background processing
+  workmanager: ^0.5.2          # For reliable background task scheduling
+  
+  # Connectivity
+  connectivity_plus: ^5.0.2    # For checking network connectivity
+  internet_connection_checker: ^1.0.0+1  # For validating actual internet access
+  
+  # Battery monitoring
+  battery_plus: ^4.0.1         # For checking battery level and charging status
+  
+  # Storage and caching
+  drift: ^2.26.1               # For local database storage
+  shared_preferences: ^2.2.0   # For storing sync preferences
+  
+  # Flutter utilities  
+  flutter_background_service: ^3.0.1  # For longer-running background services
+```
+
+## Battery-Efficient Sync Implementation
+
+### Sync Configuration Model
+
+```dart
+/// Configuration for background sync operations
+class SyncConfig {
+  // Default settings
+  static const Duration minSyncInterval = Duration(minutes: 15);
+  static const Duration normalSyncInterval = Duration(hours: 1);
+  static const Duration batterySavingInterval = Duration(hours: 3);
+  static const Duration nightSyncInterval = Duration(hours: 6);
+  static const double lowBatteryThreshold = 0.15; // 15%
+  static const double mediumBatteryThreshold = 0.30; // 30%
+  
+  // Actual settings
+  final Duration syncInterval;
+  final bool syncOnlyWhenCharging;
+  final bool syncOnlyOnWifi;
+  final bool enableNightModeSync;
+  final bool enableBatterySavingMode;
+  final TimeWindow nightTimeWindow;
+  final Set<SyncCategory> highPriorityCategories;
+  
+  const SyncConfig({
+    required this.syncInterval,
+    required this.syncOnlyWhenCharging,
+    required this.syncOnlyOnWifi, 
+    required this.enableNightModeSync,
+    required this.enableBatterySavingMode,
+    required this.nightTimeWindow,
+    required this.highPriorityCategories,
+  });
+  
+  /// Creates a default configuration
+  factory SyncConfig.defaultConfig() {
+    return SyncConfig(
+      syncInterval: normalSyncInterval,
+      syncOnlyWhenCharging: false,
+      syncOnlyOnWifi: true,
+      enableNightModeSync: true,
+      enableBatterySavingMode: true,
+      nightTimeWindow: TimeWindow(
+        start: TimeOfDay(hour: 22, minute: 0),
+        end: TimeOfDay(hour: 6, minute: 0),
+      ),
+      highPriorityCategories: {
+        SyncCategory.attendance,
+        SyncCategory.leaveRequests,
+      },
+    );
+  }
+  
+  /// Creates a battery-saving configuration
+  factory SyncConfig.batterySaving() {
+    return SyncConfig(
+      syncInterval: batterySavingInterval,
+      syncOnlyWhenCharging: true,
+      syncOnlyOnWifi: true,
+      enableNightModeSync: false,
+      enableBatterySavingMode: true,
+      nightTimeWindow: TimeWindow(
+        start: TimeOfDay(hour: 22, minute: 0),
+        end: TimeOfDay(hour: 6, minute: 0),
+      ),
+      highPriorityCategories: {
+        SyncCategory.attendance,
+      },
+    );
+  }
+  
+  /// Returns a copy of this config with updated fields
+  SyncConfig copyWith({
+    Duration? syncInterval,
+    bool? syncOnlyWhenCharging,
+    bool? syncOnlyOnWifi,
+    bool? enableNightModeSync,
+    bool? enableBatterySavingMode,
+    TimeWindow? nightTimeWindow,
+    Set<SyncCategory>? highPriorityCategories,
+  }) {
+    return SyncConfig(
+      syncInterval: syncInterval ?? this.syncInterval,
+      syncOnlyWhenCharging: syncOnlyWhenCharging ?? this.syncOnlyWhenCharging,
+      syncOnlyOnWifi: syncOnlyOnWifi ?? this.syncOnlyOnWifi,
+      enableNightModeSync: enableNightModeSync ?? this.enableNightModeSync,
+      enableBatterySavingMode: enableBatterySavingMode ?? this.enableBatterySavingMode,
+      nightTimeWindow: nightTimeWindow ?? this.nightTimeWindow,
+      highPriorityCategories: highPriorityCategories ?? this.highPriorityCategories,
+    );
+  }
+}
+
+/// Time window for scheduling operations
+class TimeWindow {
+  final TimeOfDay start;
+  final TimeOfDay end;
+  
+  const TimeWindow({
+    required this.start,
+    required this.end,
+  });
+  
+  /// Checks if the current time is within this window
+  bool isTimeInWindow(DateTime time) {
+    final timeOfDay = TimeOfDay.fromDateTime(time);
+    
+    // Convert to minutes for easy comparison
+    final startMinutes = start.hour * 60 + start.minute;
+    final endMinutes = end.hour * 60 + end.minute;
+    final currentMinutes = timeOfDay.hour * 60 + timeOfDay.minute;
+    
+    if (startMinutes <= endMinutes) {
+      // Normal window (e.g., 9:00 to 17:00)
+      return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+    } else {
+      // Overnight window (e.g., 22:00 to 6:00)
+      return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+    }
+  }
+}
+
+/// Categories of data to sync
+enum SyncCategory {
+  attendance,
+  leaveRequests,
+  employeeProfiles,
+  payrollData,
+  performance,
+  documents,
+  notifications,
+  systemSettings,
+}
+```
+
+### Battery-Aware Sync Manager
+
+```dart
+/// Manages background sync operations with battery optimization
+class BatteryAwareSyncManager {
+  final WorkManager _workManager;
+  final BatteryInfoProvider _batteryInfo;
+  final ConnectivityService _connectivity;
+  final SyncPreferences _preferences;
+  final SyncRepository _syncRepository;
+  final UsageStatsService _usageStats;
+  
+  static const String syncTaskName = 'com.hrconnect.backgroundSync';
+  static const String syncPeriodicTaskName = 'com.hrconnect.periodicSync';
+  static const String syncBatterySaverTaskName = 'com.hrconnect.batterySaverCheck';
+  
+  BatteryAwareSyncManager(
+    this._workManager,
+    this._batteryInfo,
+    this._connectivity,
+    this._preferences,
+    this._syncRepository,
+    this._usageStats,
+  );
+  
+  /// Initializes the sync manager
+  Future<void> initialize() async {
+    // Register for battery level changes
+    _batteryInfo.batteryStateStream.listen(_onBatteryStateChanged);
+    
+    // Register for connectivity changes
+    _connectivity.connectivityStream.listen(_onConnectivityChanged);
+    
+    // Initialize WorkManager
+    await _initializeWorkManager();
+    
+    // Schedule initial sync
+    await scheduleSyncBasedOnConditions();
+    
+    // Schedule daily battery usage check
+    await _scheduleDailyBatteryCheck();
+  }
+  
+  /// Initializes the WorkManager
+  Future<void> _initializeWorkManager() async {
+    await _workManager.initialize(
+      callbackDispatcher,
+      isInDebugMode: kDebugMode,
+    );
+  }
+  
+  /// Schedules sync operations based on current conditions
+  Future<void> scheduleSyncBasedOnConditions() async {
+    final config = await _preferences.getSyncConfig();
+    final batteryLevel = await _batteryInfo.getBatteryLevel();
+    final isCharging = await _batteryInfo.isCharging();
+    final connectionStatus = await _connectivity.checkConnectivity();
+    final isWifi = connectionStatus == ConnectivityResult.wifi;
+    final isNightTime = config.nightTimeWindow.isTimeInWindow(DateTime.now());
+    
+    // Cancel existing periodic sync task
+    await _workManager.cancelByUniqueName(syncPeriodicTaskName);
+    
+    // Determine sync interval based on conditions
+    Duration syncInterval = config.syncInterval;
+    
+    // Check battery conditions
+    if (config.enableBatterySavingMode) {
+      if (batteryLevel <= SyncConfig.lowBatteryThreshold && !isCharging) {
+        // Very low battery - sync only critical data or postpone
+        await _syncOnlyCriticalData();
+        return;
+      } else if (batteryLevel <= SyncConfig.mediumBatteryThreshold && !isCharging) {
+        // Low battery - use longer interval
+        syncInterval = SyncConfig.batterySavingInterval;
+      }
+    }
+    
+    // Check charging and wifi conditions
+    if ((config.syncOnlyWhenCharging && !isCharging) || 
+        (config.syncOnlyOnWifi && !isWifi)) {
+      // Skip scheduling, but set a one-time check for later
+      await _scheduleConditionCheck();
+      return;
+    }
+    
+    // Check night time conditions
+    if (isNightTime && config.enableNightModeSync) {
+      syncInterval = SyncConfig.nightSyncInterval;
+    }
+    
+    // Schedule periodic sync task with determined interval
+    await _workManager.registerPeriodicTask(
+      syncPeriodicTaskName,
+      'backgroundSync',
+      frequency: syncInterval,
+      constraints: Constraints(
+        networkType: config.syncOnlyOnWifi ? 
+            NetworkType.connected : NetworkType.not_required,
+        requiresBatteryNotLow: config.enableBatterySavingMode,
+        requiresCharging: config.syncOnlyWhenCharging,
+      ),
+      existingWorkPolicy: ExistingWorkPolicy.replace,
+      backoffPolicy: BackoffPolicy.exponential,
+    );
+    
+    // Log sync schedule
+    _logSyncSchedule(syncInterval);
+  }
+  
+  /// Schedules a one-time sync operation for critical data only
+  Future<void> _syncOnlyCriticalData() async {
+    final config = await _preferences.getSyncConfig();
+    
+    await _workManager.registerOneOffTask(
+      'criticalSync-${DateTime.now().millisecondsSinceEpoch}',
+      'syncCriticalData',
+      constraints: Constraints(
+        networkType: NetworkType.connected,
+      ),
+      inputData: {
+        'categories': config.highPriorityCategories
+            .map((c) => c.toString())
+            .toList(),
+      },
+    );
+  }
+  
+  /// Schedules a check for changed conditions
+  Future<void> _scheduleConditionCheck() async {
+    await _workManager.registerOneOffTask(
+      'conditionCheck-${DateTime.now().millisecondsSinceEpoch}',
+      'checkSyncConditions',
+      initialDelay: Duration(minutes: 30),
+      constraints: Constraints(
+        networkType: NetworkType.not_required,
+      ),
+    );
+  }
+  
+  /// Schedules daily battery usage check
+  Future<void> _scheduleDailyBatteryCheck() async {
+    await _workManager.registerPeriodicTask(
+      syncBatterySaverTaskName,
+      'checkBatteryUsage',
+      frequency: Duration(hours: 24),
+      constraints: Constraints(
+        networkType: NetworkType.not_required,
+      ),
+      existingWorkPolicy: ExistingWorkPolicy.keep,
+    );
+  }
+  
+  /// Handles battery state changes
+  void _onBatteryStateChanged(BatteryState state) async {
+    // Reschedule sync if battery state changed significantly
+    if (state == BatteryState.charging || 
+        state == BatteryState.full) {
+      await scheduleSyncBasedOnConditions();
+    } else if (state == BatteryState.discharging) {
+      final batteryLevel = await _batteryInfo.getBatteryLevel();
+      
+      if (batteryLevel <= SyncConfig.lowBatteryThreshold) {
+        // Cancel current sync tasks on very low battery
+        await _workManager.cancelByUniqueName(syncPeriodicTaskName);
+        await _syncOnlyCriticalData();
+      }
+    }
+  }
+  
+  /// Handles connectivity changes
+  void _onConnectivityChanged(ConnectivityResult result) async {
+    // Reschedule sync if wifi connectivity changed
+    final config = await _preferences.getSyncConfig();
+    
+    if (config.syncOnlyOnWifi) {
+      if (result == ConnectivityResult.wifi) {
+        await scheduleSyncBasedOnConditions();
+      } else if (result == ConnectivityResult.mobile || 
+                result == ConnectivityResult.none) {
+        // Cancel current sync tasks if wifi required but not available
+        await _workManager.cancelByUniqueName(syncPeriodicTaskName);
+        await _scheduleConditionCheck();
+      }
+    } else if (result != ConnectivityResult.none) {
+      // Schedule sync now that we have some kind of connection
+      await scheduleSyncBasedOnConditions();
+    }
+  }
+  
+  /// Adjusts sync settings based on battery usage
+  Future<void> adjustSettingsBasedOnBatteryUsage() async {
+    final syncBatteryUsage = await _usageStats.getSyncBatteryUsage();
+    final config = await _preferences.getSyncConfig();
+    
+    // Target: less than 5% battery per day
+    if (syncBatteryUsage > 0.05) { // More than 5%
+      // Calculate how much to increase the interval
+      final adjustmentFactor = syncBatteryUsage / 0.05;
+      final newInterval = Duration(
+        minutes: (config.syncInterval.inMinutes * adjustmentFactor).round(),
+      );
+      
+      // Update config with longer interval and more restrictions
+      final newConfig = config.copyWith(
+        syncInterval: newInterval,
+        syncOnlyOnWifi: true,
+        enableBatterySavingMode: true,
+      );
+      
+      await _preferences.saveSyncConfig(newConfig);
+      await scheduleSyncBasedOnConditions();
+      
+      // Log adjustment
+      _logSyncAdjustment(syncBatteryUsage, config.syncInterval, newInterval);
+    }
+  }
+  
+  /// Logs sync schedule changes
+  void _logSyncSchedule(Duration interval) {
+    log('Scheduled sync with interval: ${interval.inMinutes} minutes');
+  }
+  
+  /// Logs sync adjustment due to battery usage
+  void _logSyncAdjustment(double usage, Duration oldInterval, Duration newInterval) {
+    log('Adjusted sync due to battery usage of ${usage * 100}%. ' +
+        'Changed interval from ${oldInterval.inMinutes}m to ${newInterval.inMinutes}m');
+  }
+}
+```
+
+### Work Manager Callback Implementation
+
+```dart
+/// Callback dispatcher for WorkManager
+@pragma('vm:entry-point')
+void callbackDispatcher() {
+  WorkManager().executeTask((task, inputData) async {
+    switch (task) {
+      case 'backgroundSync':
+        return await _performBackgroundSync();
+      case 'syncCriticalData':
+        return await _performCriticalSync(inputData);
+      case 'checkSyncConditions':
+        return await _checkSyncConditions();
+      case 'checkBatteryUsage':
+        return await _checkBatteryUsage();
+      default:
+        return false;
+    }
+  });
+}
+
+/// Performs a full background sync operation
+Future<bool> _performBackgroundSync() async {
+  final syncManager = GetIt.instance<SyncManager>();
+  final connectivityService = GetIt.instance<ConnectivityService>();
+  final batteryInfo = GetIt.instance<BatteryInfoProvider>();
+  
+  try {
+    // Verify connectivity before proceeding
+    final isConnected = await connectivityService.isConnected;
+    if (!isConnected) {
+      log('Aborting sync: No connectivity');
+      return false;
+    }
+    
+    // Check battery level
+    final batteryLevel = await batteryInfo.getBatteryLevel();
+    final isCharging = await batteryInfo.isCharging();
+    
+    // Skip sync if battery is critically low and not charging
+    if (batteryLevel < 0.1 && !isCharging) {
+      log('Aborting sync: Battery critically low (${batteryLevel * 100}%)');
+      return false;
+    }
+    
+    // Perform batched sync operations to minimize battery usage
+    await syncManager.performBatchedSync();
+    
+    // Record successful sync
+    final syncStats = GetIt.instance<SyncStatistics>();
+    await syncStats.recordSyncCompletion(
+      batteryLevelBefore: batteryLevel,
+    );
+    
+    return true;
+  } catch (e) {
+    log('Sync error: $e');
+    return false;
+  }
+}
+
+/// Performs sync only for critical data categories
+Future<bool> _performCriticalSync(Map<String, dynamic>? inputData) async {
+  final syncManager = GetIt.instance<SyncManager>();
+  
+  try {
+    final categories = <SyncCategory>[];
+    
+    // Parse categories from input data
+    if (inputData != null && inputData.containsKey('categories')) {
+      final categoryStrings = List<String>.from(inputData['categories']);
+      
+      for (final categoryStr in categoryStrings) {
+        try {
+          final category = SyncCategory.values.firstWhere(
+            (e) => e.toString() == categoryStr,
+          );
+          categories.add(category);
+        } catch (_) {
+          // Skip invalid categories
+        }
+      }
+    }
+    
+    // Default to attendance if no valid categories
+    if (categories.isEmpty) {
+      categories.add(SyncCategory.attendance);
+    }
+    
+    // Perform selective sync
+    await syncManager.performSelectiveSync(categories);
+    return true;
+  } catch (e) {
+    log('Critical sync error: $e');
+    return false;
+  }
+}
+
+/// Checks if sync conditions have changed and reschedules if needed
+Future<bool> _checkSyncConditions() async {
+  final syncManager = GetIt.instance<BatteryAwareSyncManager>();
+  
+  try {
+    await syncManager.scheduleSyncBasedOnConditions();
+    return true;
+  } catch (e) {
+    log('Condition check error: $e');
+    return false;
+  }
+}
+
+/// Checks battery usage and adjusts sync settings if needed
+Future<bool> _checkBatteryUsage() async {
+  final syncManager = GetIt.instance<BatteryAwareSyncManager>();
+  
+  try {
+    await syncManager.adjustSettingsBasedOnBatteryUsage();
+    return true;
+  } catch (e) {
+    log('Battery check error: $e');
+    return false;
+  }
+}
+```
+
+### Batched Sync Implementation
+
+```dart
+/// Manages sync operations
+class SyncManager {
+  final SyncRepository _repository;
+  final ConnectivityService _connectivity;
+  
+  SyncManager(this._repository, this._connectivity);
+  
+  /// Performs batched sync operation to minimize battery usage
+  Future<void> performBatchedSync() async {
+    // Get pending operations
+    final pendingOperations = await _repository.getPendingOperations();
+    
+    // Skip if nothing to sync
+    if (pendingOperations.isEmpty) {
+      return;
+    }
+    
+    // Organize operations by category for batching
+    final Map<SyncCategory, List<SyncOperation>> categorizedOperations = {};
+    for (final operation in pendingOperations) {
+      final category = operation.category;
+      if (!categorizedOperations.containsKey(category)) {
+        categorizedOperations[category] = [];
+      }
+      categorizedOperations[category]!.add(operation);
+    }
+    
+    // Sync each category in a single batch
+    for (final entry in categorizedOperations.entries) {
+      await _syncCategory(entry.key, entry.value);
+      
+      // Small delay between categories to prevent CPU spikes
+      await Future.delayed(Duration(milliseconds: 100));
+    }
+  }
+  
+  /// Performs sync for specific categories only
+  Future<void> performSelectiveSync(List<SyncCategory> categories) async {
+    // Get pending operations for specified categories
+    final pendingOperations = await _repository.getPendingOperationsByCategories(categories);
+    
+    // Skip if nothing to sync
+    if (pendingOperations.isEmpty) {
+      return;
+    }
+    
+    // Organize operations by category for batching
+    final Map<SyncCategory, List<SyncOperation>> categorizedOperations = {};
+    for (final operation in pendingOperations) {
+      final category = operation.category;
+      if (!categorizedOperations.containsKey(category)) {
+        categorizedOperations[category] = [];
+      }
+      categorizedOperations[category]!.add(operation);
+    }
+    
+    // Sync each category in a single batch
+    for (final entry in categorizedOperations.entries) {
+      await _syncCategory(entry.key, entry.value);
+      
+      // Small delay between categories to prevent CPU spikes
+      await Future.delayed(Duration(milliseconds: 100));
+    }
+  }
+  
+  /// Synchronizes a category of operations in a single batch
+  Future<void> _syncCategory(
+    SyncCategory category,
+    List<SyncOperation> operations,
+  ) async {
+    // Skip if no operations
+    if (operations.isEmpty) {
+      return;
+    }
+    
+    // Check connectivity before proceeding
+    final isConnected = await _connectivity.isConnected;
+    if (!isConnected) {
+      // Skip syncing if not connected
+      return;
+    }
+    
+    // Batch operations to minimize API calls
+    final result = await _repository.syncBatch(category, operations);
+    
+    // Process results
+    for (final entry in result.entries) {
+      final operationId = entry.key;
+      final success = entry.value;
+      
+      if (success) {
+        await _repository.markOperationCompleted(operationId);
+      } else {
+        await _repository.incrementOperationRetryCount(operationId);
+      }
+    }
+  }
+}
+```
+
+### Battery Usage Tracking
+
+```dart
+/// Tracks battery usage for sync operations
+class SyncStatistics {
+  final SharedPreferences _prefs;
+  
+  static const String _lastSyncTimeKey = 'last_sync_time';
+  static const String _syncCountKey = 'sync_count';
+  static const String _batteryUsageKey = 'sync_battery_usage';
+  static const String _dailyBatteryUsageKey = 'sync_daily_battery_usage';
+  static const String _lastBatteryCheckKey = 'last_battery_check';
+  
+  SyncStatistics(this._prefs);
+  
+  /// Records a completed sync operation with battery usage
+  Future<void> recordSyncCompletion({
+    required double batteryLevelBefore,
+  }) async {
+    // Get current battery level
+    final batteryInfo = GetIt.instance<BatteryInfoProvider>();
+    final batteryLevelAfter = await batteryInfo.getBatteryLevel();
+    
+    // Calculate battery usage for this sync
+    // (only if not charging to get accurate measurement)
+    final isCharging = await batteryInfo.isCharging();
+    double batteryUsage = 0;
+    
+    if (!isCharging && batteryLevelBefore > batteryLevelAfter) {
+      batteryUsage = batteryLevelBefore - batteryLevelAfter;
+    }
+    
+    // Update statistics
+    final now = DateTime.now();
+    await _prefs.setString(_lastSyncTimeKey, now.toIso8601String());
+    
+    final syncCount = (_prefs.getInt(_syncCountKey) ?? 0) + 1;
+    await _prefs.setInt(_syncCountKey, syncCount);
+    
+    // Update total battery usage
+    final totalUsage = (_prefs.getDouble(_batteryUsageKey) ?? 0) + batteryUsage;
+    await _prefs.setDouble(_batteryUsageKey, totalUsage);
+    
+    // Update daily usage stats
+    await _updateDailyBatteryUsage(batteryUsage);
+  }
+  
+  /// Updates the daily battery usage statistics
+  Future<void> _updateDailyBatteryUsage(double usage) async {
+    final now = DateTime.now();
+    final lastCheckStr = _prefs.getString(_lastBatteryCheckKey);
+    
+    if (lastCheckStr != null) {
+      final lastCheck = DateTime.parse(lastCheckStr);
+      final difference = now.difference(lastCheck);
+      
+      // If it's a new day, reset the counter
+      if (difference.inDays >= 1) {
+        await _prefs.setDouble(_dailyBatteryUsageKey, usage);
+      } else {
+        // Add to the current day's usage
+        final dailyUsage = (_prefs.getDouble(_dailyBatteryUsageKey) ?? 0) + usage;
+        await _prefs.setDouble(_dailyBatteryUsageKey, dailyUsage);
+      }
+    } else {
+      // First sync of the day
+      await _prefs.setDouble(_dailyBatteryUsageKey, usage);
+    }
+    
+    // Update last check time
+    await _prefs.setString(_lastBatteryCheckKey, now.toIso8601String());
+  }
+  
+  /// Gets the estimated daily battery usage from sync operations
+  Future<double> getDailyBatteryUsage() async {
+    return _prefs.getDouble(_dailyBatteryUsageKey) ?? 0;
+  }
+  
+  /// Resets the sync statistics
+  Future<void> resetStatistics() async {
+    await _prefs.remove(_syncCountKey);
+    await _prefs.remove(_batteryUsageKey);
+    await _prefs.remove(_dailyBatteryUsageKey);
+  }
+}
+```
+
+## Battery and Connectivity Services
+
+```dart
+/// Provider for battery information
+class BatteryInfoProvider {
+  final Battery _battery;
+  
+  BatteryInfoProvider(this._battery);
+  
+  /// Gets the current battery level as a percentage (0.0 to 1.0)
+  Future<double> getBatteryLevel() async {
+    final level = await _battery.batteryLevel;
+    return level / 100.0;
+  }
+  
+  /// Checks if the device is currently charging
+  Future<bool> isCharging() async {
+    final state = await _battery.batteryState;
+    return state == BatteryState.charging || state == BatteryState.full;
+  }
+  
+  /// Gets a stream of battery state changes
+  Stream<BatteryState> get batteryStateStream {
+    return _battery.onBatteryStateChanged;
+  }
+}
+
+/// Service for checking connectivity
+class ConnectivityService {
+  final Connectivity _connectivity;
+  final InternetConnectionChecker _connectionChecker;
+  
+  ConnectivityService(this._connectivity, this._connectionChecker);
+  
+  /// Checks if the device has internet connectivity
+  Future<bool> get isConnected async {
+    final result = await _connectivity.checkConnectivity();
+    
+    if (result == ConnectivityResult.none) {
+      return false;
+    }
+    
+    // Double-check with actual connection test
+    return await _connectionChecker.hasConnection;
+  }
+  
+  /// Gets the current connectivity result
+  Future<ConnectivityResult> checkConnectivity() async {
+    return await _connectivity.checkConnectivity();
+  }
+  
+  /// Gets a stream of connectivity changes
+  Stream<ConnectivityResult> get connectivityStream {
+    return _connectivity.onConnectivityChanged;
+  }
+}
+```
+
+## Business Rules for Battery Optimization
+
+1. **Maximum Battery Usage Limit**
+   - Background sync must consume less than 5% of battery per day
+   - Battery usage must be tracked and sync frequency adjusted to meet this limit
+   - Critical data sync must continue even in battery saving mode
+
+2. **Adaptive Sync Scheduling**
+   - Sync intervals must adapt to battery level, charging state, and connectivity
+   - Longer intervals must be used for low battery situations
+   - Sync operations should batch related data to minimize wake cycles
+   - Night mode should use longer intervals to minimize battery impact during sleep
+
+3. **Connectivity Optimization**
+   - Always check actual connectivity before starting sync operations
+   - WiFi-only mode should be available to reduce battery and data usage
+   - Fallback connectivity checks must be implemented for network transitions
+
+4. **Battery State Awareness**
+   - Sync frequency should increase when charging and decrease when on battery
+   - Very low battery levels should limit sync to only critical data
+   - Battery usage statistics must influence sync scheduling decisions
+
+5. **Data Prioritization**
+   - Critical data categories (attendance, leave requests) must sync even in battery saving mode
+   - Lower priority data should be deferred when battery is constrained
+   - User configurable priority categories should be supported
+
+## Testing Approach
+
+```dart
+void main() {
+  group('Battery-Aware Sync Manager', () {
+    late MockWorkManager mockWorkManager;
+    late MockBatteryInfoProvider mockBatteryInfo;
+    late MockConnectivityService mockConnectivity;
+    late MockSyncPreferences mockPreferences;
+    late MockSyncRepository mockSyncRepository;
+    late MockUsageStatsService mockUsageStats;
+    late BatteryAwareSyncManager syncManager;
+    
+    setUp(() {
+      mockWorkManager = MockWorkManager();
+      mockBatteryInfo = MockBatteryInfoProvider();
+      mockConnectivity = MockConnectivityService();
+      mockPreferences = MockSyncPreferences();
+      mockSyncRepository = MockSyncRepository();
+      mockUsageStats = MockUsageStatsService();
+      
+      syncManager = BatteryAwareSyncManager(
+        mockWorkManager,
+        mockBatteryInfo,
+        mockConnectivity,
+        mockPreferences,
+        mockSyncRepository,
+        mockUsageStats,
+      );
+    });
+    
+    test('should use longer sync interval when battery is low', () async {
+      // Arrange
+      final config = SyncConfig.defaultConfig();
+      when(mockPreferences.getSyncConfig()).thenAnswer((_) async => config);
+      when(mockBatteryInfo.getBatteryLevel()).thenAnswer((_) async => 0.2); // 20%
+      when(mockBatteryInfo.isCharging()).thenAnswer((_) async => false);
+      when(mockConnectivity.checkConnectivity())
+          .thenAnswer((_) async => ConnectivityResult.wifi);
+      
+      // Act
+      await syncManager.scheduleSyncBasedOnConditions();
+      
+      // Assert
+      verify(mockWorkManager.registerPeriodicTask(
+        any,
+        any,
+        frequency: SyncConfig.batterySavingInterval,
+        constraints: any,
+        existingWorkPolicy: any,
+        backoffPolicy: any,
+      )).called(1);
+    });
+    
+    test('should only sync critical data when battery is very low', () async {
+      // Arrange
+      final config = SyncConfig.defaultConfig();
+      when(mockPreferences.getSyncConfig()).thenAnswer((_) async => config);
+      when(mockBatteryInfo.getBatteryLevel()).thenAnswer((_) async => 0.1); // 10%
+      when(mockBatteryInfo.isCharging()).thenAnswer((_) async => false);
+      
+      // Act
+      await syncManager.scheduleSyncBasedOnConditions();
+      
+      // Assert
+      verify(mockWorkManager.registerOneOffTask(
+        any,
+        'syncCriticalData',
+        constraints: any,
+        inputData: any,
+      )).called(1);
+      
+      // Verify no periodic sync was scheduled
+      verifyNever(mockWorkManager.registerPeriodicTask(
+        any,
+        any,
+        frequency: any,
+        constraints: any,
+        existingWorkPolicy: any,
+        backoffPolicy: any,
+      ));
+    });
+    
+    test('should adjust settings when battery usage exceeds limit', () async {
+      // Arrange
+      final config = SyncConfig.defaultConfig();
+      when(mockPreferences.getSyncConfig()).thenAnswer((_) async => config);
+      when(mockUsageStats.getSyncBatteryUsage()).thenAnswer((_) async => 0.07); // 7%
+      
+      // Act
+      await syncManager.adjustSettingsBasedOnBatteryUsage();
+      
+      // Assert
+      // Verify config was updated with longer interval
+      final newConfigCaptor = verify(mockPreferences.saveSyncConfig(captureAny)).captured.first as SyncConfig;
+      expect(newConfigCaptor.syncInterval.inMinutes, greaterThan(config.syncInterval.inMinutes));
+      expect(newConfigCaptor.syncOnlyOnWifi, isTrue);
+      expect(newConfigCaptor.enableBatterySavingMode, isTrue);
+    });
+  });
+}
+```
+
+## Implementation Best Practices
+
+1. **Minimize Wake Cycles**
+   - Batch related sync operations to minimize device wake-ups
+   - Schedule sync operations with similar constraints together
+   - Use exponential backoff for retry attempts
+   - Prefer periodic tasks over multiple one-time tasks
+
+2. **Efficient Data Processing**
+   - Process data in memory-efficient batches
+   - Avoid redundant API calls for the same data
+   - Implement intelligent merging of operations (e.g., collapse multiple updates to the same entity)
+   - Use delta sync when possible to minimize transfer size
+
+3. **Connectivity Optimization**
+   - Always check connectivity before starting data transfer
+   - Add retry logic for transient network issues
+   - Implement circuit breaker pattern for failing endpoints
+   - Handle network transitions gracefully
+
+4. **Thread and Process Management**
+   - Keep background operations lightweight
+   - Avoid CPU-intensive operations in background tasks
+   - Release resources immediately after use
+   - Use appropriate thread priorities for background tasks
+
+5. **Measurement and Monitoring**
+   - Track and log battery usage for sync operations
+   - Monitor daily battery consumption
+   - Implement adaptive strategies based on battery metrics
+
+   - Allow user visibility into battery usage

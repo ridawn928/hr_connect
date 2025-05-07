@@ -1,0 +1,405 @@
+---
+description: **/domain/**/*.dart
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces the aggregate pattern for domain entities in HR Connect, ensuring consistent implementation of the Employee aggregate root and related profile aggregates.
+globs: **/domain/**/*.dart
+alwaysApply: false
+---
+
+# Domain Entity Architecture
+
+This rule provides guidance for implementing domain entities in the HR Connect application following the aggregate pattern with Employee as the primary aggregate root.
+
+## Overview
+
+HR Connect uses the aggregate pattern for domain modeling with:
+- **Employee** as the primary aggregate root
+- Supporting profile aggregates that maintain references to the parent Employee entity
+
+Each aggregate enforces its own business rules and invariants while maintaining integrity of the overall domain model.
+
+## Required Packages
+
+```yaml
+dependencies:
+  dartz: ^0.10.1           # For Either type and functional error handling
+  equatable: ^2.0.5        # For value equality comparisons
+  freezed_annotation: ^2.2.0 # For immutable model generation
+  uuid: ^3.0.7             # For unique ID generation
+  
+dev_dependencies:
+  freezed: ^2.3.5         # For code generation
+  build_runner: ^2.4.8    # For running code generators
+```
+
+## Aggregate Pattern Implementation
+
+### Employee Aggregate Root
+
+```dart
+/// Primary aggregate root representing an employee in the system
+/// Contains core identity and basic information
+@freezed
+class Employee with _$Employee {
+  const Employee._();
+
+  const factory Employee({
+    required EmployeeId id,
+    required EmployeeName name,
+    required ContactInfo contactInfo,
+    required EmployeeStatus status,
+  }) = _Employee;
+  
+  /// Creates a new employee with generated ID and active status
+  factory Employee.create({
+    required EmployeeName name,
+    required ContactInfo contactInfo,
+  }) {
+    return Employee(
+      id: EmployeeId(Uuid().v4()),
+      name: name,
+      contactInfo: contactInfo,
+      status: EmployeeStatus.active,
+    );
+  }
+  
+  /// Business rule: Validates if employee can be deactivated
+  bool canBeDeactivated() {
+    // Implementation of business rule
+    return status == EmployeeStatus.active;
+  }
+  
+  /// Core domain operation: Deactivates an employee 
+  Either<Failure, Employee> deactivate() {
+    if (!canBeDeactivated()) {
+      return Left(ValidationFailure('Employee cannot be deactivated'));
+    }
+    return Right(copyWith(status: EmployeeStatus.inactive));
+  }
+}
+```
+
+### Profile Aggregate Example (AuthenticationProfile)
+
+```dart
+/// Authentication profile aggregate containing credentials and security status
+@freezed
+class AuthenticationProfile with _$AuthenticationProfile {
+  const AuthenticationProfile._();
+  
+  const factory AuthenticationProfile({
+    required AuthProfileId id,
+    required EmployeeId employeeId,  // Reference to parent aggregate
+    required Username username,
+    required HashedPassword passwordHash,
+    required List<AuthDevice> registeredDevices,
+    required DateTime? lastLogin,
+    required bool isLocked,
+    required int failedLoginAttempts,
+  }) = _AuthenticationProfile;
+  
+  /// Business rule: Maximum allowed devices per employee
+  static const maxAllowedDevices = 2;
+  
+  /// Business rule: Maximum failed login attempts before locking
+  static const maxFailedAttempts = 5;
+  
+  /// Business rule: Check if new device can be registered
+  bool canRegisterNewDevice() {
+    return registeredDevices.length < maxAllowedDevices;
+  }
+  
+  /// Core domain operation: Register new device
+  Either<Failure, AuthenticationProfile> registerDevice(AuthDevice device) {
+    if (!canRegisterNewDevice()) {
+      return Left(ValidationFailure('Maximum number of devices reached'));
+    }
+    
+    if (registeredDevices.any((d) => d.deviceId == device.deviceId)) {
+      return Left(ValidationFailure('Device already registered'));
+    }
+    
+    return Right(copyWith(
+      registeredDevices: [...registeredDevices, device],
+    ));
+  }
+  
+  /// Core domain operation: Record login attempt
+  Either<Failure, AuthenticationProfile> recordLoginAttempt(bool successful) {
+    if (successful) {
+      return Right(copyWith(
+        lastLogin: DateTime.now(),
+        failedLoginAttempts: 0,
+        isLocked: false,
+      ));
+    } else {
+      final newAttempts = failedLoginAttempts + 1;
+      final shouldLock = newAttempts >= maxFailedAttempts;
+      
+      return Right(copyWith(
+        failedLoginAttempts: newAttempts,
+        isLocked: shouldLock,
+      ));
+    }
+  }
+}
+```
+
+### Value Objects
+
+```dart
+/// Value objects should validate their values during construction
+@freezed
+class EmployeeName with _$EmployeeName {
+  const EmployeeName._();
+  
+  /// Creates a validated employee name
+  /// Throws [ValidationException] if validation fails
+  factory EmployeeName(String value) {
+    if (value.trim().isEmpty) {
+      throw ValidationException('Employee name cannot be empty');
+    }
+    
+    if (value.trim().length < 2) {
+      throw ValidationException('Employee name must be at least 2 characters');
+    }
+    
+    return EmployeeName._(value.trim());
+  }
+  
+  const factory EmployeeName._(String value) = _EmployeeName;
+  
+  /// Provides the raw validated value
+  String get value => this.value;
+}
+```
+
+## Domain Entity Best Practices
+
+1. **Encapsulate Business Rules**
+   - Implement validation logic within entities and value objects
+   - Include business rule methods that explain domain constraints
+   - Document business rules with clear comments
+
+2. **Use Value Objects for Validation**
+   - Create dedicated value objects for all primitive fields
+   - Perform validation during value object construction
+   - Use meaningful error messages in validation exceptions
+
+3. **Implement Aggregate Boundaries**
+   - Define clear aggregate roots responsible for their child entities
+   - Maintain references to parent aggregates using IDs, not direct object references
+   - Prevent direct modification of child entities outside the aggregate
+
+4. **Follow Immutability Principles**
+   - Use Freezed for immutable entity implementations
+   - Return new instances when modifying entities (copyWith)
+   - Design methods to enforce valid state transitions
+
+5. **Implement Domain Events**
+   - Define domain events for significant state changes
+   - Trigger events when important domain operations occur
+   - Use events for cross-aggregate communication
+
+## HR Connect Aggregate Structure
+
+The HR Connect system uses the following primary aggregates:
+
+1. **Employee**: Core identity and basic information
+   - Primary aggregate root for the entire system
+   - Contains identity and core employee information
+
+2. **AuthenticationProfile**: Credentials and security status
+   - Manages login credentials and security settings
+   - Controls device registration (max 2 devices per employee)
+   - Handles authentication attempts and account locking
+
+3. **DeviceProfile**: Registered devices and verification status
+   - Tracks device information and verification status
+   - Manages device deactivation and verification
+
+4. **AttendanceProfile**: Attendance records and statistics
+   - Stores QR-based attendance records
+   - Tracks attendance statistics and status
+
+5. **RequestProfile**: Leave, overtime, and other requests
+   - Manages different request types (leave, overtime, etc.)
+   - Tracks request status and approval workflows
+   - Enforces time-based business rules (24h emergency leave, etc.)
+
+6. **EmploymentProfile**: Job details and organizational placement
+   - Contains job title, department, and reporting structure
+   - Tracks employment history and status
+
+7. **PerformanceProfile**: Goals, KPIs, and reviews
+   - Manages performance goals and metrics
+   - Tracks review history and ratings
+
+8. **NotificationProfile**: Notification preferences
+   - Stores notification settings and history
+   - Manages delivery preferences
+
+9. **SyncProfile**: Synchronization status and operations
+   - Tracks offline-to-online sync operations
+   - Manages pending changes and conflict resolution
+
+## Business Rules
+
+Each aggregate enforces specific business rules:
+
+### Employee
+- Employee must have a valid name and contact information
+- Employee status transitions follow defined workflows (active → inactive → terminated)
+
+### AuthenticationProfile
+- Maximum 2 registered devices per employee
+- Account locks after 5 failed login attempts
+- Passwords must meet complexity requirements
+- Token expiry after 8 hours of inactivity 
+
+### AttendanceProfile  
+- QR codes expire after 15 minutes
+- Grace period configurable per branch and employee type
+- Status classification (ON_TIME, LATE, ABSENT, HALF_DAY, APPROVED_LEAVE)
+
+### RequestProfile
+- Emergency leave limited to 24-hour notice
+- Personal leave requires 30-day advance notice
+- Approvals follow hierarchical workflow
+- Leave balances checked during request creation
+
+## Testing Approach
+
+Domain entities should be thoroughly tested with the TDD approach:
+
+```dart
+void main() {
+  group('Employee', () {
+    test('should create valid employee with generated ID', () {
+      // Arrange
+      final name = EmployeeName('John Doe');
+      final contactInfo = ContactInfo('john@example.com');
+      
+      // Act
+      final employee = Employee.create(
+        name: name,
+        contactInfo: contactInfo,
+      );
+      
+      // Assert
+      expect(employee.id, isNotNull);
+      expect(employee.name, equals(name));
+      expect(employee.contactInfo, equals(contactInfo));
+      expect(employee.status, equals(EmployeeStatus.active));
+    });
+    
+    test('should deactivate active employee', () {
+      // Arrange
+      final employee = Employee(
+        id: EmployeeId('test-id'),
+        name: EmployeeName('John Doe'),
+        contactInfo: ContactInfo('john@example.com'),
+        status: EmployeeStatus.active,
+      );
+      
+      // Act
+      final result = employee.deactivate();
+      
+      // Assert
+      expect(result.isRight(), isTrue);
+      result.fold(
+        (failure) => fail('Should not fail'),
+        (updated) => expect(updated.status, equals(EmployeeStatus.inactive)),
+      );
+    });
+    
+    test('should fail to deactivate inactive employee', () {
+      // Arrange
+      final employee = Employee(
+        id: EmployeeId('test-id'),
+        name: EmployeeName('John Doe'),
+        contactInfo: ContactInfo('john@example.com'),
+        status: EmployeeStatus.inactive,
+      );
+      
+      // Act
+      final result = employee.deactivate();
+      
+      // Assert
+      expect(result.isLeft(), isTrue);
+      result.fold(
+        (failure) => expect(failure, isA<ValidationFailure>()),
+        (updated) => fail('Should not succeed'),
+      );
+    });
+  });
+}
+```
+
+## Implementation Process
+
+When implementing a new domain entity:
+
+1. Start with unit tests that define expected behavior and business rules
+2. Define value objects for all fields with validation logic
+3. Implement the entity with its core behavior
+4. Add business rule methods that enforce constraints
+5. Create domain operations that represent valid state transitions
+6. Document all business rules with clear comments
+
+## Common Patterns
+
+### Entity Identification
+
+```dart
+/// Base class for all entity IDs
+@freezed
+class EntityId with _$EntityId {
+  const EntityId._();
+  const factory EntityId(String value) = _EntityId;
+  
+  /// Creates a new random ID
+  factory EntityId.generate() => EntityId(Uuid().v4());
+}
+
+/// Specific ID type for Employee aggregate
+@freezed
+class EmployeeId with _$EmployeeId {
+  const EmployeeId._();
+  const factory EmployeeId(String value) = _EmployeeId;
+  
+  /// Creates a new random ID
+  factory EmployeeId.generate() => EmployeeId(Uuid().v4());
+}
+```
+
+### Failure Handling with Either
+
+```dart
+/// Attempt to perform a domain operation
+Either<Failure, Employee> updateName(EmployeeName newName) {
+  if (status == EmployeeStatus.terminated) {
+    return Left(ValidationFailure('Cannot update terminated employee'));
+  }
+  return Right(copyWith(name: newName));
+}
+```
+
+### Domain Events
+
+```dart
+/// Event emitted when employee status changes
+@freezed
+class EmployeeStatusChangedEvent with _$EmployeeStatusChangedEvent {
+  const factory EmployeeStatusChangedEvent({
+    required EmployeeId employeeId,
+    required EmployeeStatus oldStatus,
+    required EmployeeStatus newStatus,
+    required DateTime timestamp,
+  }) = _EmployeeStatusChangedEvent;
+}
+
+```

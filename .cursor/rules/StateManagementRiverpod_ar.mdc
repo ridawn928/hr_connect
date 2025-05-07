@@ -1,0 +1,819 @@
+---
+description: Enforces consistent Riverpod state management patterns for HR Connect, ensuring proper handling of loading/error states, optimized rebuilds, and integration with the offline-first architecture.
+globs: 
+alwaysApply: false
+---
+---
+description: Enforces consistent Riverpod state management patterns for HR Connect, ensuring proper handling of loading/error states, optimized rebuilds, and integration with the offline-first architecture.
+globs: **/*provider*.dart,**/*notifier*.dart,**/state/**/*.dart
+alwaysApply: false
+---
+
+# State Management with Riverpod
+
+This rule provides guidance for implementing state management in HR Connect using Riverpod, with specific patterns for handling loading/error states and ensuring efficient UI updates.
+
+## Overview
+
+HR Connect uses Riverpod (v2.6.1+) for state management with the following key principles:
+- AsyncValue pattern for loading/error states
+- Feature-specific providers with proper scoping
+- Optimistic UI updates with sync status indicators
+- Efficient rebuilds with strategic provider watching
+- Integration with the offline-first architecture
+
+## Required Packages
+
+```yaml
+dependencies:
+  # State Management
+  riverpod: ^2.6.1          # Core state management library
+  flutter_riverpod: ^2.6.1  # Flutter integration for Riverpod
+  riverpod_generator: ^2.6.5 # Code generation for providers
+  freezed: ^2.3.5           # Immutable state classes
+  
+dev_dependencies:
+  build_runner: ^2.4.8      # For code generation
+  riverpod_lint: ^2.3.7     # Linting rules for Riverpod
+  custom_lint: ^0.5.7       # Custom linting support
+```
+
+## Provider Organization
+
+### Provider Structure
+
+Organize providers by feature slice, creating dedicated provider files for each domain concept:
+
+```dart
+// File: features/attendance/presentation/providers/attendance_providers.dart
+
+/// Provides attendance records for the current user
+@riverpod
+Future<List<AttendanceRecord>> userAttendance(
+  UserAttendanceRef ref, 
+  String userId,
+) async {
+  // Watch the repository provider to rebuild this provider when the repository changes
+  final repository = ref.watch(attendanceRepositoryProvider);
+  
+  // Get the date range (today by default)
+  final today = DateTime.now();
+  final startDate = DateTime(today.year, today.month, today.day);
+  final endDate = startDate.add(const Duration(days: 1));
+  
+  // Get attendance records
+  final result = await repository.getAttendanceRecords(
+    userId, 
+    startDate, 
+    endDate,
+  );
+  
+  // Handle errors with proper exceptions that AsyncValue can catch
+  return result.fold(
+    (failure) => throw AttendanceException(failure.message),
+    (records) => records,
+  );
+}
+
+/// Provides a stream of live attendance updates
+@riverpod
+Stream<AttendanceRecord> liveAttendance(
+  LiveAttendanceRef ref,
+  String userId,
+) {
+  final repository = ref.watch(attendanceRepositoryProvider);
+  return repository.watchLatestAttendance(userId);
+}
+
+/// Manages the attendance check-in/out process
+@riverpod
+class AttendanceController extends _$AttendanceController {
+  @override
+  AttendanceState build() {
+    // Initialize with an empty state
+    return const AttendanceState.initial();
+  }
+  
+  /// Submit attendance using QR code
+  Future<void> submitAttendance(
+    String qrData,
+    AttendanceType type,
+  ) async {
+    // Set loading state
+    state = const AttendanceState.loading();
+    
+    try {
+      // Get current user
+      final userAsyncValue = ref.read(currentUserProvider);
+      
+      final user = userAsyncValue.maybeWhen(
+        data: (user) => user,
+        orElse: () => throw const AuthException('User not authenticated'),
+      );
+      
+      // Validate QR code
+      final qrService = ref.read(qrScannerServiceProvider);
+      final qrResult = await qrService.validateQrCode(qrData);
+      
+      // Handle QR validation errors
+      final validQrData = qrResult.fold(
+        (failure) => throw QrValidationException(failure.toString()),
+        (data) => data,
+      );
+      
+      // Get device info
+      final deviceId = await ref.read(deviceRepositoryProvider)
+          .getCurrentDeviceId()
+          .then((result) => result.fold(
+                (failure) => null,
+                (id) => id,
+              ));
+      
+      // Submit attendance
+      final repository = ref.read(attendanceRepositoryProvider);
+      
+      final result = await repository.submitAttendance(
+        employeeId: user.id,
+        branchId: validQrData.branchId,
+        type: type,
+        qrNonce: validQrData.nonce,
+        deviceId: deviceId,
+      );
+      
+      // Set success or error state
+      state = result.fold(
+        (failure) => AttendanceState.error(failure.message),
+        (record) => AttendanceState.success(record),
+      );
+      
+      // Refresh the user attendance list
+      ref.invalidate(userAttendanceProvider(user.id));
+      
+    } catch (e) {
+      // Handle unexpected errors
+      state = AttendanceState.error(e.toString());
+    }
+  }
+}
+
+/// State for the attendance controller
+@freezed
+class AttendanceState with _$AttendanceState {
+  const factory AttendanceState.initial() = _Initial;
+  const factory AttendanceState.loading() = _Loading;
+  const factory AttendanceState.success(AttendanceRecord record) = _Success;
+  const factory AttendanceState.error(String message) = _Error;
+}
+```
+
+### Provider Dependencies
+
+```dart
+// File: features/attendance/presentation/providers/attendance_dependencies.dart
+
+/// Repository provider for attendance management
+@riverpod
+AttendanceRepository attendanceRepository(AttendanceRepositoryRef ref) {
+  // Get database from core infrastructure providers
+  final database = ref.watch(databaseProvider);
+  
+  // Get supporting services
+  final statusService = ref.watch(attendanceStatusServiceProvider);
+  final nonceRepository = ref.watch(nonceRepositoryProvider);
+  final syncQueueRepository = ref.watch(syncQueueRepositoryProvider);
+  
+  // Return repository implementation
+  return AttendanceRepositoryImpl(
+    database,
+    statusService,
+    nonceRepository, 
+    syncQueueRepository,
+  );
+}
+```
+
+## State Patterns
+
+### AsyncValue Pattern
+
+Use AsyncValue to handle loading, error, and data states consistently:
+
+```dart
+/// Example of using AsyncValue in a widget
+class UserAttendanceScreen extends ConsumerWidget {
+  const UserAttendanceScreen({super.key});
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Get current user ID
+    final userAsyncValue = ref.watch(currentUserProvider);
+    
+    // Early return for authentication states
+    return userAsyncValue.when(
+      data: (user) => _buildAttendanceList(context, ref, user.id),
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (error, stack) => ErrorDisplay(
+        message: 'Authentication error: $error',
+        onRetry: () => ref.refresh(currentUserProvider),
+      ),
+    );
+  }
+  
+  Widget _buildAttendanceList(BuildContext context, WidgetRef ref, String userId) {
+    // Watch attendance data with AsyncValue handling
+    final attendanceAsync = ref.watch(userAttendanceProvider(userId));
+    
+    return attendanceAsync.when(
+      data: (records) => records.isEmpty
+          ? const EmptyAttendanceDisplay()
+          : AttendanceListView(records: records),
+      loading: () => const ShimmerLoadingList(),
+      error: (error, stack) => ErrorDisplay(
+        message: 'Failed to load attendance records: $error',
+        onRetry: () => ref.refresh(userAttendanceProvider(userId)),
+      ),
+    );
+  }
+}
+```
+
+### Optimistic Updates
+
+Implement optimistic UI updates for immediate feedback:
+
+```dart
+/// Example of optimistic updates for leave requests
+@riverpod
+class LeaveRequestController extends _$LeaveRequestController {
+  @override
+  LeaveRequestState build() {
+    // Initialize with an empty state
+    return const LeaveRequestState.initial();
+  }
+  
+  Future<void> submitRequest(LeaveRequest request) async {
+    // Get current state for reverting if operation fails
+    final previousState = state;
+    
+    // Immediately update state optimistically
+    state = LeaveRequestState.submitting(request);
+    
+    try {
+      final repository = ref.read(leaveRequestRepositoryProvider);
+      
+      final result = await repository.submitRequest(request);
+      
+      result.fold(
+        (failure) {
+          // Revert to previous state on failure
+          state = previousState;
+          state = LeaveRequestState.error(failure.message);
+        },
+        (submittedRequest) {
+          // Update state with successful result
+          state = LeaveRequestState.success(submittedRequest);
+          
+          // Invalidate related providers to refresh lists
+          ref.invalidate(userLeaveRequestsProvider(request.employeeId));
+        },
+      );
+    } catch (e) {
+      // Revert to previous state on exception
+      state = previousState;
+      state = LeaveRequestState.error(e.toString());
+    }
+  }
+}
+```
+
+### Background Synchronization and Status Indicators
+
+```dart
+/// Provide sync status information
+@riverpod
+class SyncStatusNotifier extends _$SyncStatusNotifier {
+  @override
+  SyncStatus build() {
+    // Initialize by checking current sync operations
+    _checkSyncStatus();
+    
+    // Listen to connectivity changes
+    ref.listen(connectivityStatusProvider, (previous, next) {
+      if (previous == ConnectivityStatus.offline && 
+          next == ConnectivityStatus.online) {
+        // Trigger sync when coming back online
+        _triggerSync();
+      }
+    });
+    
+    return const SyncStatus.idle();
+  }
+  
+  Future<void> _checkSyncStatus() async {
+    final repository = ref.read(syncQueueRepositoryProvider);
+    final pendingResult = await repository.getPendingOperations();
+    
+    pendingResult.fold(
+      (failure) {
+        // Handle failure to check sync status
+        state = SyncStatus.error(failure.message);
+      },
+      (operations) {
+        if (operations.isEmpty) {
+          state = const SyncStatus.idle();
+        } else {
+          state = SyncStatus.pendingSync(operations.length);
+        }
+      },
+    );
+  }
+  
+  Future<void> _triggerSync() async {
+    // First check pending operations
+    final repository = ref.read(syncQueueRepositoryProvider);
+    final pendingResult = await repository.getPendingOperations();
+    
+    await pendingResult.fold(
+      (failure) {
+        // Handle failure to get pending operations
+        state = SyncStatus.error(failure.message);
+        return;
+      },
+      (operations) async {
+        if (operations.isEmpty) {
+          state = const SyncStatus.idle();
+          return;
+        }
+        
+        // Update state to syncing with count
+        state = SyncStatus.syncing(operations.length);
+        
+        // Get sync service and trigger synchronization
+        final syncService = ref.read(syncServiceProvider);
+        final result = await syncService.syncPendingOperations();
+        
+        // Update state based on result
+        result.fold(
+          (failure) {
+            state = SyncStatus.error(failure.message);
+          },
+          (syncedCount) {
+            if (syncedCount == operations.length) {
+              state = const SyncStatus.idle();
+            } else {
+              state = SyncStatus.partialSync(
+                syncedCount, 
+                operations.length - syncedCount,
+              );
+            }
+          },
+        );
+      },
+    );
+  }
+  
+  // Manually trigger synchronization
+  Future<void> triggerSync() async {
+    await _triggerSync();
+  }
+}
+
+/// Status of synchronization
+@freezed
+class SyncStatus with _$SyncStatus {
+  const factory SyncStatus.idle() = _Idle;
+  const factory SyncStatus.pendingSync(int operationCount) = _PendingSync;
+  const factory SyncStatus.syncing(int operationCount) = _Syncing;
+  const factory SyncStatus.partialSync(int syncedCount, int pendingCount) = _PartialSync;
+  const factory SyncStatus.error(String message) = _Error;
+}
+
+/// Widget that displays sync status
+class SyncStatusIndicator extends ConsumerWidget {
+  const SyncStatusIndicator({super.key});
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final syncStatus = ref.watch(syncStatusNotifierProvider);
+    
+    return syncStatus.maybeWhen(
+      idle: () => const SizedBox.shrink(), // Hide when idle
+      pendingSync: (count) => _buildPendingBadge(context, count),
+      syncing: (count) => _buildSyncingIndicator(context, count),
+      partialSync: (syncedCount, pendingCount) => 
+          _buildPartialSyncIndicator(context, syncedCount, pendingCount),
+      error: (message) => _buildErrorIndicator(context, message, ref),
+      orElse: () => const SizedBox.shrink(),
+    );
+  }
+  
+  Widget _buildPendingBadge(BuildContext context, int count) {
+    return Badge(
+      label: Text('$count'),
+      backgroundColor: Theme.of(context).colorScheme.secondary,
+      child: IconButton(
+        icon: const Icon(Icons.sync),
+        tooltip: '$count pending sync operations',
+        onPressed: () => _showSyncDialog(context),
+      ),
+    );
+  }
+  
+  // Additional helper methods...
+}
+```
+
+## Efficient Provider Usage
+
+### Select for Granular Updates
+
+Use `select` to minimize rebuilds:
+
+```dart
+class EmployeeNameDisplay extends ConsumerWidget {
+  final String employeeId;
+  
+  const EmployeeNameDisplay({required this.employeeId, super.key});
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    // Use select to only rebuild when the name changes
+    final name = ref.watch(
+      employeeProfileProvider(employeeId).select(
+        (AsyncValue<EmployeeProfile> profile) => profile.whenData(
+          (data) => data.name,
+        ),
+      ),
+    );
+    
+    return name.when(
+      data: (name) => Text(name),
+      loading: () => const Text('Loading...'),
+      error: (_, __) => const Text('Error loading name'),
+    );
+  }
+}
+```
+
+### Consumer vs ConsumerWidget
+
+```dart
+// Use ConsumerWidget for simple widgets that depend on providers
+class AttendanceStatusDisplay extends ConsumerWidget {
+  final String recordId;
+  
+  const AttendanceStatusDisplay({required this.recordId, super.key});
+  
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final recordAsync = ref.watch(attendanceRecordProvider(recordId));
+    
+    return recordAsync.when(
+      data: (record) => StatusBadge(status: record.status),
+      loading: () => const ShimmerBadge(),
+      error: (_, __) => const StatusBadge(status: AttendanceStatus.unknown),
+    );
+  }
+}
+
+// Use Consumer for localized state dependencies in larger widgets
+class EmployeeDetailScreen extends StatelessWidget {
+  final String employeeId;
+  
+  const EmployeeDetailScreen({required this.employeeId, super.key});
+  
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Employee Details')),
+      body: ListView(
+        children: [
+          // Header doesn't depend on providers
+          const EmployeeDetailHeader(),
+          
+          // Only this section depends on attendance data
+          Consumer(
+            builder: (context, ref, child) {
+              final attendanceAsync = ref.watch(
+                employeeAttendanceProvider(employeeId),
+              );
+              
+              return attendanceAsync.when(
+                data: (records) => AttendanceSummaryCard(records: records),
+                loading: () => const ShimmerCard(),
+                error: (_, __) => const ErrorCard(),
+              );
+            },
+          ),
+          
+          // Other sections that don't depend on the same providers
+          // ...
+        ],
+      ),
+    );
+  }
+}
+```
+
+## Offline-First Integration
+
+### Repository Providers with Offline Support
+
+```dart
+/// Repository provider with offline support
+@riverpod
+LeaveRequestRepository leaveRequestRepository(LeaveRequestRepositoryRef ref) {
+  final database = ref.watch(databaseProvider);
+  final apiClient = ref.watch(apiClientProvider);
+  final networkInfo = ref.watch(networkInfoProvider);
+  final syncQueue = ref.watch(syncQueueRepositoryProvider);
+  
+  return LeaveRequestRepositoryImpl(
+    database,
+    apiClient,
+    networkInfo,
+    syncQueue,
+  );
+}
+```
+
+### Auto-Disposing Caching Providers
+
+```dart
+/// Provides employee profile with caching
+@riverpod
+class EmployeeProfileCache extends _$EmployeeProfileCache {
+  // Cache duration
+  static const cacheDuration = Duration(minutes: 30);
+  
+  @override
+  Future<EmployeeProfile> build(String employeeId) async {
+    // Cancel cache invalidation timer when this provider is disposed
+    final timer = Timer(cacheDuration, () {
+      ref.invalidateSelf();
+    });
+    
+    // Ensure timer is cancelled when provider is disposed
+    ref.onDispose(() {
+      timer.cancel();
+    });
+    
+    // Fetch profile from repository
+    final repository = ref.watch(employeeRepositoryProvider);
+    final result = await repository.getEmployeeProfile(employeeId);
+    
+    return result.fold(
+      (failure) => throw EmployeeException(failure.message),
+      (profile) => profile,
+    );
+  }
+  
+  // Method to force refresh
+  Future<void> refresh() async {
+    ref.invalidateSelf();
+  }
+}
+```
+
+## Business Rules for State Management
+
+### Provider Lifespan
+- Use `autoDispose` for most providers to prevent memory leaks
+- Maintain global providers for app-wide state (authentication, connectivity)
+- Cache providers selectively based on usage patterns and memory constraints
+
+### Rebuild Optimization
+- Always use `select` when watching only specific parts of a provider
+- Keep provider dependencies minimal to prevent unnecessary rebuilds
+- Define clear state models with proper equality comparisons
+
+### Offline-First Requirements
+- Always handle loading/error/data states with AsyncValue
+- Update local state immediately for optimistic updates
+- Show sync status indicators for pending operations
+- Expose manual sync triggers for users
+
+### Authorization and State
+- Filter data based on user permissions at the provider level
+- Refresh state when user permissions change
+- Securely handle sensitive data in state models
+
+## Testing State Management
+
+```dart
+void main() {
+  // Example tests for a leave request controller
+  group('LeaveRequestController', () {
+    late LeaveRequestController controller;
+    late MockLeaveRequestRepository mockRepository;
+    
+    setUp(() {
+      mockRepository = MockLeaveRequestRepository();
+      
+      // Create a test ProviderContainer
+      final container = ProviderContainer(
+        overrides: [
+          leaveRequestRepositoryProvider.overrideWithValue(mockRepository),
+        ],
+      );
+      
+      // Get the controller from the container
+      controller = container.read(leaveRequestControllerProvider.notifier);
+      
+      // Add a listener for testing state changes
+      addTearDown(container.dispose);
+    });
+    
+    test('initial state should be initial', () {
+      expect(controller.state, const LeaveRequestState.initial());
+    });
+    
+    test('submitRequest should update state to success on successful submission', 
+        () async {
+      // Arrange
+      final request = LeaveRequest(
+        id: 'test-id',
+        employeeId: 'employee-1',
+        type: LeaveType.vacation,
+        startDate: DateTime(2023, 5, 10),
+        endDate: DateTime(2023, 5, 15),
+        reason: 'Vacation',
+        status: LeaveRequestStatus.pending,
+      );
+      
+      when(mockRepository.submitRequest(any))
+          .thenAnswer((_) async => Right(request));
+      
+      // Act
+      await controller.submitRequest(request);
+      
+      // Assert
+      expect(controller.state, LeaveRequestState.success(request));
+      verify(mockRepository.submitRequest(request)).called(1);
+    });
+    
+    test('submitRequest should revert to previous state on failure', () async {
+      // Arrange
+      final request = LeaveRequest(/* ... */);
+      final failure = LeaveRequestFailure('Failed to submit request');
+      
+      when(mockRepository.submitRequest(any))
+          .thenAnswer((_) async => Left(failure));
+      
+      // Act
+      await controller.submitRequest(request);
+      
+      // Assert
+      expect(
+        controller.state, 
+        LeaveRequestState.error(failure.message),
+      );
+      verify(mockRepository.submitRequest(request)).called(1);
+    });
+  });
+}
+```
+
+## Riverpod Generator Usage
+
+Use the Riverpod generator to reduce boilerplate:
+
+```dart
+// Before generating code
+@riverpod
+class LeaveRequestController extends _$LeaveRequestController {
+  @override
+  LeaveRequestState build() {
+    return const LeaveRequestState.initial();
+  }
+  
+  // Methods...
+}
+
+// Run build_runner to generate code
+// flutter pub run build_runner build
+```
+
+## Common Provider Types
+
+```dart
+// Simple provider for values that don't change often
+@riverpod
+Duration attendanceQrValidity(AttendanceQrValidityRef ref) {
+  // This could be loaded from configuration
+  return const Duration(minutes: 15);
+}
+
+// Provider family for parameterized dependencies
+@riverpod
+Future<List<AttendanceRecord>> employeeMonthlyAttendance(
+  EmployeeMonthlyAttendanceRef ref,
+  String employeeId,
+  DateTime month,
+) async {
+  final repository = ref.watch(attendanceRepositoryProvider);
+  
+  final startDate = DateTime(month.year, month.month, 1);
+  final endDate = DateTime(
+    month.year, 
+    month.month + 1, 
+    0, // Last day of month
+    23, 59, 59,
+  );
+  
+  final result = await repository.getAttendanceRecords(
+    employeeId,
+    startDate,
+    endDate,
+  );
+  
+  return result.fold(
+    (failure) => throw AttendanceException(failure.message),
+    (records) => records,
+  );
+}
+
+// Stream provider for reactive updates
+@riverpod
+Stream<List<LeaveRequest>> pendingLeaveRequests(
+  PendingLeaveRequestsRef ref,
+  String managerId,
+) {
+  final repository = ref.watch(leaveRequestRepositoryProvider);
+  return repository.watchPendingRequests(managerId);
+}
+
+// StateNotifier provider for complex state
+@riverpod
+class FilterState extends _$FilterState {
+  @override
+  AttendanceFilter build() {
+    return const AttendanceFilter(
+      startDate: null,
+      endDate: null,
+      statuses: null,
+      types: null,
+    );
+  }
+  
+  void setDateRange(DateTime? start, DateTime? end) {
+    state = state.copyWith(startDate: start, endDate: end);
+  }
+  
+  void toggleStatus(AttendanceStatus status) {
+    final currentStatuses = state.statuses?.toList() ?? [];
+    
+    if (currentStatuses.contains(status)) {
+      currentStatuses.remove(status);
+    } else {
+      currentStatuses.add(status);
+    }
+    
+    state = state.copyWith(
+      statuses: currentStatuses.isEmpty ? null : currentStatuses,
+    );
+  }
+  
+  void reset() {
+    state = const AttendanceFilter(
+      startDate: null,
+      endDate: null,
+      statuses: null,
+      types: null,
+    );
+  }
+}
+```
+
+## Integration with Core Features
+
+### Authentication and State
+
+```dart
+// Extension on WidgetRef for convenient access to current user
+extension CurrentUserX on WidgetRef {
+  User? get currentUser {
+    return read(authStateProvider).maybeWhen(
+      authenticated: (user) => user,
+      orElse: () => null,
+    );
+  }
+  
+  bool get isAuthenticated {
+    return read(authStateProvider).maybeWhen(
+      authenticated: (_) => true,
+      orElse: () => false,
+    );
+  }
+  
+  bool hasPermission(Permission permission) {
+    return read(authStateProvider).maybeWhen(
+      authenticated: (user) {
+        return user.hasPermission(permission);
+      },
+      orElse: () => false,
+    );
+  }
+}
+
+```
